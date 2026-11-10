@@ -209,11 +209,12 @@ adbrent serve
 ```
 
 opens a page on `http://127.0.0.1:7878` that shows every device, who rents it and for how
-long, what is using a device outside adbrent, and a running feed of refusals, forced
-rentals and agent feedback. A rented device has a **Take back** button. The page refreshes
-every few seconds and is served to your own machine only.
+long, what is using a device outside adbrent, and a feed of refusals, forced rentals and
+agent feedback, which you can narrow to feedback alone. A rented device has a **Take
+back** button that asks you to confirm. The page keeps itself current, follows your light
+or dark setting, loads nothing from the network, and is served to your own machine only.
 
-![The adbrent status page: four devices, two of them rented, and recent activity](assets/status-page.png)
+![The adbrent status page: two of five devices rented, one free, one in use outside adbrent, one off limits, and a feed of what agents ran into](assets/status-page.png)
 
 ## Sharing a device with a helper session
 
