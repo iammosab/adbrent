@@ -19,6 +19,8 @@ USAGE
   adbrent release [SERIAL...]      Hand back your devices (all of them by default)
   adbrent release --force SERIAL   Take a device back from whoever holds it
   adbrent release --force --all    Clear every rental
+  adbrent ignore [TEXT]            Stop counting on-device commands containing TEXT
+                                   as outside use (no TEXT: list; --remove TEXT)
   adbrent env                      Shell line that puts the adb stand-in on PATH
   adbrent install [--shim-only]    Set up ~/.adbrent and the Claude Code plugin
   adbrent uninstall                Remove both
@@ -33,6 +35,7 @@ pub fn run(args: Vec<String>) -> i32 {
         Some("status" | "ls") => status(rest),
         Some("rent") => rent(rest),
         Some("release") => release(rest),
+        Some("ignore") => ignore(rest),
         Some("env") => {
             println!("{}", install::env_lines(None));
             0
@@ -85,7 +88,12 @@ fn status(args: &[String]) -> i32 {
             let probes: Vec<_> = rows
                 .iter()
                 .filter(|r| r.3.is_none() && r.2 == "device")
-                .map(|r| (r.0.clone(), scope.spawn(|| adb::usage(&real, &r.0).streams)))
+                .map(|r| {
+                    (
+                        r.0.clone(),
+                        scope.spawn(|| desk::outside(&real, &r.0).streams),
+                    )
+                })
                 .collect();
             probes
                 .into_iter()
@@ -139,7 +147,7 @@ fn status(args: &[String]) -> i32 {
                 streams if streams.is_empty() => "-".to_string(),
                 streams => format!(
                     "nobody, but in use outside adbrent ({})",
-                    streams.join(", ")
+                    streams.join("; ")
                 ),
             },
             Some(l) if l.owner == me.owner => format!("you ({}, {})", l.label, l.age()),
@@ -148,6 +156,38 @@ fn status(args: &[String]) -> i32 {
         println!("{serial:w0$}  {model:w1$}  {state:w2$}  {renter}");
     }
     0
+}
+
+fn ignore(args: &[String]) -> i32 {
+    let remove = args.iter().any(|a| a == "--remove");
+    let text: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let mut list = store::ignored();
+    match text.first() {
+        None if remove => {
+            eprintln!("adbrent: --remove needs the text to stop ignoring");
+            return 2;
+        }
+        None => {
+            if list.is_empty() {
+                println!("Nothing is ignored.");
+            }
+            list.iter().for_each(|p| println!("{p}"));
+            return 0;
+        }
+        Some(text) if remove => list.retain(|p| p != *text),
+        Some(text) => {
+            if !list.contains(text) {
+                list.push((*text).clone());
+            }
+        }
+    }
+    match store::set_ignored(&list) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("adbrent: cannot save the ignore list: {e}");
+            1
+        }
+    }
 }
 
 fn rent(args: &[String]) -> i32 {

@@ -50,11 +50,46 @@ fn in_use(serial: &str, streams: &[String], devs: &[Device]) -> String {
         .cloned()
         .collect();
     format!(
-        "adbrent: {} is not rented, but something outside adbrent is using it right now (running on the device: {}). Do not use it.\n{}\nadbrent: if that is wrong, `adbrent rent --force {serial}` takes it anyway.",
+        "adbrent: {} is not rented, but something outside adbrent is using it right now (running on the device: {}). Do not use it.\n{}\nadbrent: if that is a helper that is fine to leave running, `adbrent ignore <part of its name>` stops counting it. `adbrent rent --force {serial}` takes the device anyway.",
         name(serial, devs),
-        streams.join(", "),
+        streams.join("; "),
         alternatives(&others)
     )
+}
+
+/// What is using `serial` that adbrent does not account for.
+pub struct Outside {
+    /// Commands running on the device that no rental explains.
+    pub streams: Vec<String>,
+    pub idle_ms: Option<u64>,
+}
+
+/// Ask the device what is running on it, and set aside what adbrent can
+/// explain: commands started while the device was rented (a renter's tools
+/// often leave helpers running after the rental ends) and commands the user
+/// has chosen to ignore.
+pub fn outside(real: &Path, serial: &str) -> Outside {
+    let usage = adb::usage(real, serial);
+    let ignored = store::ignored();
+    let spans = store::spans(serial);
+    let now = store::now();
+    let streams = usage
+        .streams
+        .iter()
+        .filter(|s| !ignored.iter().any(|text| s.args.contains(text.as_str())))
+        .filter(|s| {
+            let started = now.saturating_sub(s.age);
+            // A few seconds of slack: a tool may start its helper just before the rental is written.
+            !spans
+                .iter()
+                .any(|&(from, to)| started + 5 >= from && started <= to)
+        })
+        .map(adb::Stream::label)
+        .collect();
+    Outside {
+        streams,
+        idle_ms: usage.idle_ms,
+    }
 }
 
 pub enum Claim {
@@ -74,7 +109,7 @@ pub fn claim(real: &Path, serial: &str, me: &Me, devs: &[Device], force: bool) -
         Some(l) if l.alive() => return Claim::Refused(refusal(serial, &l, devs)),
         _ if force => {}
         _ => {
-            let streams = adb::usage(real, serial).streams;
+            let streams = outside(real, serial).streams;
             if !streams.is_empty() {
                 return Claim::Refused(in_use(serial, &streams, devs));
             }
@@ -108,9 +143,9 @@ pub fn pick<'a>(
         Err(e) => Err(format!("adbrent: cannot record a rental: {e}")),
     };
     for d in free {
-        let usage = adb::usage(real, &d.serial);
+        let usage = outside(real, &d.serial);
         if !usage.streams.is_empty() {
-            busy.push(format!("{} ({})", d.name(), usage.streams.join(", ")));
+            busy.push(format!("{} ({})", d.name(), usage.streams.join("; ")));
         } else if usage.idle_ms.is_some_and(|ms| ms < RECENT_MS) {
             warm.push(d);
         } else if let Some(d) = take(d)? {

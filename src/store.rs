@@ -166,6 +166,8 @@ pub fn acquire(serial: &str, me: &Me) -> io::Result<Result<bool, Lease>> {
             new = false;
         } else if l.alive() {
             return Ok(Err(l));
+        } else {
+            record_span(&l);
         }
     }
     let lease = Lease {
@@ -195,12 +197,66 @@ pub fn release(pick: impl Fn(&Lease) -> bool) -> io::Result<Vec<String>> {
         };
         if pick(&lease) {
             fs::remove_file(&path)?;
+            record_span(&lease);
             released.push(lease.serial);
         } else if !lease.alive() {
             let _ = fs::remove_file(&path);
+            record_span(&lease);
         }
     }
     Ok(released)
+}
+
+fn span_path(serial: &str) -> PathBuf {
+    home()
+        .join("history")
+        .join(format!("{}.json", safe(serial)))
+}
+
+/// Note that `lease` has ended, so that whatever its renter left running on
+/// the device is later recognised as a leftover and not as someone else's use.
+fn record_span(lease: &Lease) {
+    let path = span_path(&lease.serial);
+    let mut spans: Vec<(u64, u64)> = read_json(&path).unwrap_or_default();
+    spans.push((lease.since, now()));
+    let keep = spans.len().saturating_sub(20);
+    let _ = write_json(&path, &spans[keep..].to_vec());
+}
+
+/// The periods (start, end) during which `serial` was rented: past rentals,
+/// and the present one if there is one.
+pub fn spans(serial: &str) -> Vec<(u64, u64)> {
+    let mut spans: Vec<(u64, u64)> = read_json(&span_path(serial)).unwrap_or_default();
+    if let Some(l) = read_lease(serial) {
+        spans.push((l.since, now()));
+    }
+    spans
+}
+
+fn ignore_path() -> PathBuf {
+    home().join("ignore")
+}
+
+/// Pieces of text that mark an on-device command as a helper to disregard.
+pub fn ignored() -> Vec<String> {
+    fs::read_to_string(ignore_path())
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+pub fn set_ignored(patterns: &[String]) -> io::Result<()> {
+    fs::create_dir_all(home())?;
+    fs::write(
+        ignore_path(),
+        patterns
+            .iter()
+            .map(|p| format!("{p}\n"))
+            .collect::<String>(),
+    )
 }
 
 pub fn write_session(id: &str, session: &Session) -> io::Result<()> {

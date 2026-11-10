@@ -16,7 +16,7 @@ for a in "$@"; do
 done
 # The usage probe: FAKE_BUSY names a device with a logcat running on it.
 if [ "$3" = shell ] && [ "$2" = "$FAKE_BUSY" ]; then
-  case "$4" in *pidof*) echo "S logcat"; exit 0 ;; esac
+  case "$4" in *pidof*) echo "S ${FAKE_AGE:-00:05} logcat -v time"; exit 0 ;; esac
 fi
 echo "REAL $*"
 "#;
@@ -396,4 +396,56 @@ fn the_plugin_matches_this_version_and_runs_hooks_through_the_binary() {
     assert!(std::fs::read_to_string(d.dir.join("env"))
         .unwrap()
         .contains("ADBRENT_SESSION='p1'"));
+}
+
+#[test]
+fn leftovers_from_a_rental_and_ignored_helpers_are_not_outside_use() {
+    let d = Desk::new("leftover");
+    let adb = |session: &str, age: &str, args: &[&str]| {
+        d.command(d.dir.join("shim/adb"), session, args)
+            .env("FAKE_BUSY", "AAA")
+            .env("FAKE_AGE", age)
+            .output()
+            .unwrap()
+    };
+    // Session a rents AAA (taking it by force: something already runs there), then hands it back.
+    let forced = d
+        .command(
+            env!("CARGO_BIN_EXE_adbrent").into(),
+            "a",
+            &["rent", "--force", "AAA"],
+        )
+        .output()
+        .unwrap();
+    assert_eq!(out(&forced), "AAA\n");
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert!(out(&d.rent("a", &["release"])).contains("Released AAA"));
+
+    // What started during that rental is a leftover: the next session may have the device.
+    assert_eq!(
+        out(&adb("b", "00:01", &["-s", "AAA", "shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    d.rent("b", &["release"]);
+
+    // Something that has been running since long before any rental is outside use...
+    let c = adb("c", "1-00:00:00", &["-s", "AAA", "shell", "id"]);
+    assert_eq!(c.status.code(), Some(1));
+    assert!(err(&c).contains("adbrent ignore"), "{}", err(&c));
+
+    // ...until the person in charge says to ignore it.
+    assert_eq!(d.rent("c", &["ignore", "logcat -v"]).status.code(), Some(0));
+    assert_eq!(out(&d.rent("c", &["ignore"])), "logcat -v\n");
+    assert_eq!(
+        out(&adb("c", "1-00:00:00", &["-s", "AAA", "shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    d.rent("c", &["release"]);
+    d.rent("c", &["ignore", "--remove", "logcat -v"]);
+    assert_eq!(
+        adb("e", "1-00:00:00", &["-s", "AAA", "shell", "id"])
+            .status
+            .code(),
+        Some(1)
+    );
 }

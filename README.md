@@ -147,6 +147,8 @@ adbrent rent [SERIAL] [--wait[=SECONDS]] [--force]
 adbrent release [SERIAL...]        Hand back your devices (all of them by default)
 adbrent release --force SERIAL     Take a device back from whoever holds it
 adbrent release --force --all      Clear every rental
+adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
+                                   outside use (no TEXT: list; --remove TEXT: undo)
 adbrent env                        Shell line that puts the adb stand-in on PATH
 adbrent install [--shim-only]      Set up ~/.adbrent and the Claude Code plugin
 adbrent uninstall                  Remove both
@@ -194,9 +196,19 @@ adbrent runs one short command on it and looks at two things:
 - **When the device last saw input.** A device touched in the last two minutes is handed
   out only when no quieter one is free. It is never refused for this alone.
 
-`adbrent status` shows the same thing for every unrented device. The check costs 0.3 to
-0.7 seconds, once, when a device is first rented; later commands skip it. Set
-`ADBRENT_NO_PROBE=1` to turn it off.
+Two things are set aside, because they are not someone else using the device:
+
+- **Leftovers from a rental.** Device tools often leave a helper running after the session
+  that started it has ended (a screen-mirroring agent, a test instrumentation). adbrent
+  remembers when each device was rented, and a command that started during a rental is
+  not counted against the next renter.
+- **Helpers you tell it to ignore.** `adbrent ignore screen-sharing-agent` stops counting
+  any on-device command whose command line contains that text. `adbrent ignore` lists what
+  is ignored and `adbrent ignore --remove <text>` undoes it.
+
+`adbrent status` shows the same thing for every unrented device, with the name of what is
+running. The check costs 0.3 to 0.7 seconds, once, when a device is first rented; later
+commands skip it. Set `ADBRENT_NO_PROBE=1` to turn it off.
 
 It sees what is happening at that moment. A program that uses a device in short bursts,
 with nothing running in between, looks idle between bursts.
@@ -264,7 +276,7 @@ the next time anyone asks for it.
 | `adbrent: cannot find the real adb on PATH` | adb is not installed, or only the stand-in is on PATH. Install platform-tools, or set `ADBRENT_REAL_ADB=/path/to/adb`. |
 | A Claude Code session still drives any device | The session started before `adbrent install`; restart it. `which adb` inside the session should print `~/.adbrent/shim/adb`. |
 | A device stays rented by a session that is idle | The session is still open. Close it, or run `adbrent release --force <serial>`. |
-| A device is reported in use outside adbrent, and you know it is not | Something left a command running on it (often a forgotten `adb logcat`). Stop that, or run `adbrent rent --force <serial>`. |
+| A device is reported in use outside adbrent, and you know it is not | Something left a command running on it; the message and `adbrent status` name it. Stop it, tell adbrent to disregard it with `adbrent ignore <part of its name>`, or run `adbrent rent --force <serial>`. |
 | The plugin did not install | Run the two steps yourself: `claude plugin marketplace add iammosab/adbrent` and `claude plugin install adbrent@adbrent`. |
 | A session says adbrent is not active | The program could not be downloaded or built. Check the network, or install it with cargo as above. |
 

@@ -86,10 +86,12 @@ pub fn install(shim_only: bool) -> i32 {
     println!("Installed adbrent in {}", store::home().display());
     if !shim_only {
         let source = marketplace();
-        // A marketplace that is already registered just needs refreshing.
-        let added = claude(&["plugin", "marketplace", "add", &source]);
+        // An "adbrent" marketplace may already be registered, possibly an older
+        // one from another place: replace it, so the plugin comes from `source`.
+        let mut added = claude(&["plugin", "marketplace", "add", &source]);
         if added == Some(false) {
-            claude(&["plugin", "marketplace", "update", "adbrent"]);
+            claude(&["plugin", "marketplace", "remove", "adbrent"]);
+            added = claude(&["plugin", "marketplace", "add", &source]);
         }
         match added.and_then(|_| claude(&["plugin", "install", "adbrent@adbrent"])) {
             Some(true) => println!("Claude Code plugin installed. New sessions share devices automatically."),

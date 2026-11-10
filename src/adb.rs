@@ -81,27 +81,84 @@ pub fn devices(real: &PathBuf, conn: &[String]) -> Vec<Device> {
         .unwrap_or_default()
 }
 
+/// A command running on the device over adb.
+#[derive(Debug, Clone)]
+pub struct Stream {
+    /// Seconds since it started.
+    pub age: u64,
+    /// Its full command line.
+    pub args: String,
+}
+
+impl Stream {
+    /// A short name for messages: the program, plus the jar or class it runs.
+    pub fn label(&self) -> String {
+        let tokens: Vec<&str> = self.args.split_whitespace().collect();
+        let program = tokens
+            .first()
+            .map_or("", |t| t.rsplit('/').next().unwrap_or(t));
+        let jar = tokens.iter().find_map(|t| {
+            let t = t.trim_matches(|c| c == '\'' || c == '"' || c == ';');
+            t.ends_with(".jar")
+                .then(|| t.rsplit(['/', '=']).next().unwrap_or(t))
+        });
+        let text = match (jar, program) {
+            (Some(jar), _) => format!("{program}: {jar}"),
+            // `app_process <dir> <class> <args>`: the class and its arguments say what it is.
+            (None, "app_process") => format!(
+                "app_process {}",
+                tokens.iter().skip(2).copied().collect::<Vec<_>>().join(" ")
+            ),
+            _ => self.args.clone(),
+        };
+        match text.char_indices().nth(100) {
+            Some((cut, _)) => format!("{}...", &text[..cut]),
+            None => text,
+        }
+    }
+}
+
 /// Signs that a device is being used, whoever is using it.
 #[derive(Debug, Default)]
 pub struct Usage {
-    /// Commands running on the device over adb right now (logcat, sh, ...),
-    /// started by any client: another adb, Gradle, an IDE, scrcpy.
-    pub streams: Vec<String>,
+    /// Commands running on the device over adb right now (logcat, a shell, a
+    /// test run, a mirroring agent), started by any client: another adb,
+    /// Gradle, an IDE, scrcpy, a tool server.
+    pub streams: Vec<Stream>,
     /// How long ago the device last saw input, when it reports that.
     pub idle_ms: Option<u64>,
 }
 
 /// Runs on the device. Every adb stream is a child of adbd; `$$` is this probe
 /// itself and `abb` is adbd's own permanent helper.
-const PROBE: &str = "a=$(pidof adbd); ps -A -o PID,PPID,NAME 2>/dev/null | while read p pp n; do \
-    [ \"$pp\" = \"$a\" ] && [ \"$p\" != \"$$\" ] && [ \"$n\" != abb ] && echo \"S $n\"; done; \
+const PROBE: &str = "a=$(pidof adbd); ps -A -o PID,PPID,ETIME,ARGS 2>/dev/null | while read p pp t args; do \
+    [ \"$pp\" = \"$a\" ] && [ \"$p\" != \"$$\" ] && [ \"$args\" != abb ] && echo \"S $t $args\"; done; \
     dumpsys power 2>/dev/null | grep -m1 'astUserActivityTime=.*ms ago'";
+
+/// `[[days-]hours:]minutes:seconds`, as ps prints elapsed time.
+fn parse_elapsed(text: &str) -> Option<u64> {
+    let (days, clock) = match text.split_once('-') {
+        Some((d, rest)) => (d.parse::<u64>().ok()?, rest),
+        None => (0, text),
+    };
+    let mut secs = 0;
+    for part in clock.split(':') {
+        secs = secs * 60 + part.parse::<u64>().ok()?;
+    }
+    Some(days * 86_400 + secs)
+}
 
 pub fn parse_usage(output: &str) -> Usage {
     let mut usage = Usage::default();
     for line in output.lines() {
-        if let Some(name) = line.strip_prefix("S ") {
-            usage.streams.push(name.trim().to_string());
+        if let Some(rest) = line.strip_prefix("S ") {
+            let (elapsed, args) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
+            if let Some(age) = parse_elapsed(elapsed) {
+                usage.streams.push(Stream {
+                    age,
+                    args: args.trim().to_string(),
+                });
+            }
         } else if let Some(ago) = line
             .rsplit('(')
             .next()
@@ -270,8 +327,20 @@ mod tests {
 
     #[test]
     fn reads_usage() {
-        let u = parse_usage("S logcat\nS sh\n  mLastUserActivityTime=1670085052 (476844 ms ago)\n");
-        assert_eq!(u.streams, ["logcat", "sh"]);
+        let u = parse_usage(
+            "S 00:42 logcat -v time\nS 1-02:03:04 sh -c CLASSPATH=/data/local/tmp/.studio/screen-sharing-agent.jar app_process /x Main\n\
+             S 06:11 app_process /system/bin com.android.commands.am.Am instrument -w com.example/.Run\n  mLastUserActivityTime=1670085052 (476844 ms ago)\n",
+        );
+        assert_eq!(
+            u.streams.iter().map(|s| s.age).collect::<Vec<_>>(),
+            [42, 93_784, 371]
+        );
+        assert_eq!(u.streams[0].label(), "logcat -v time");
+        assert_eq!(u.streams[1].label(), "sh: screen-sharing-agent.jar");
+        assert_eq!(
+            u.streams[2].label(),
+            "app_process com.android.commands.am.Am instrument -w com.example/.Run"
+        );
         assert_eq!(u.idle_ms, Some(476844));
         let none = parse_usage("REAL -s AAA shell whatever\n");
         assert!(none.streams.is_empty() && none.idle_ms.is_none());
