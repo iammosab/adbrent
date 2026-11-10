@@ -705,6 +705,25 @@ fn the_status_page_shows_devices_and_takes_one_back() {
         out(&d.adb("b", &["-s", "AAA", "shell", "id"])),
         "REAL -s AAA shell id\n"
     );
+    // Debug mode shows on the page, and can be switched from it (with our header only).
+    assert!(ask(&format!("GET /api/state HTTP/1.1\r\n{host}\r\n")).contains(r#""debug":false"#));
+    assert!(ask(&format!("POST /api/debug/on HTTP/1.1\r\n{host}\r\n")).starts_with("HTTP/1.1 404"));
+    assert!(ask(&format!(
+        "POST /api/debug/on HTTP/1.1\r\n{host}X-Adbrent: 1\r\n\r\n"
+    ))
+    .contains(r#""debug":true"#));
+    d.adb("b", &["-s", "AAA", "shell", "id"]);
+    let traced = ask(&format!("GET /api/state HTTP/1.1\r\n{host}\r\n"));
+    assert!(
+        traced.contains(r#""debug":true"#)
+            && traced.contains("adb -s AAA shell id")
+            && traced.contains(r#""report":{"#),
+        "{traced}"
+    );
+    assert!(ask(&format!(
+        "POST /api/debug/off HTTP/1.1\r\n{host}X-Adbrent: 1\r\n\r\n"
+    ))
+    .contains(r#""debug":false"#));
     server.kill().unwrap();
     let _ = server.wait();
 }

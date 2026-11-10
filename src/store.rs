@@ -424,6 +424,20 @@ pub fn debug() -> bool {
     env::var_os("ADBRENT_DEBUG").is_some_and(|v| !v.is_empty()) || home().join("debug").exists()
 }
 
+/// Turn the trace on or off for every session on this machine.
+pub fn set_debug(on: bool) -> io::Result<()> {
+    let flag = home().join("debug");
+    if on {
+        fs::create_dir_all(home())?;
+        fs::write(flag, "")
+    } else {
+        match fs::remove_file(flag) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Note something that happened: a rental, a refusal, a wait, an agent's
 /// feedback. Kept on this machine only; never allowed to fail a command.
 pub fn log_event(kind: &str, me: &Me, serial: &str, detail: &str) {

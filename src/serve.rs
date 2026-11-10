@@ -30,11 +30,13 @@ fn state(probes: &Probes) -> String {
         streams
     };
     let events = store::events();
-    let recent: Vec<_> = events.iter().rev().take(300).collect();
+    let recent: Vec<_> = events.iter().rev().take(600).collect();
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "now": store::now(),
         "devices": cli::rows(&probe),
+        "debug": store::debug(),
+        "report": cli::build_report(24),
         "log": recent,
     })
     .to_string()
@@ -123,6 +125,15 @@ fn handle(mut stream: TcpStream, probes: &Probes) {
                 "200 OK",
                 "application/json",
                 &serde_json::json!({ "released": released }).to_string(),
+            );
+        }
+        ("POST", "/api/debug/on" | "/api/debug/off") if header("x-adbrent").is_some() => {
+            let changed = store::set_debug(path.ends_with("/on")).is_ok();
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json",
+                &serde_json::json!({ "changed": changed, "debug": store::debug() }).to_string(),
             );
         }
         _ => respond(&mut stream, "404 Not Found", "text/plain", "not found"),

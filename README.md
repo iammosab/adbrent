@@ -216,7 +216,9 @@ opens a page on `http://127.0.0.1:7878` that shows every device, who rents it an
 long, what is using a device outside adbrent, and a feed of what agents ran into
 (refusals, forced rentals, errors and feedback), which you can narrow to feedback alone
 or widen to everything that happened. A rented device has a **Take
-back** button that asks you to confirm. The page keeps itself current, follows your light
+back** button that asks you to confirm. A **Debug mode** panel shows whether debug
+is on, lets you switch it, and carries the same summary as `adbrent report`; with debug
+on, a **Commands** view lists every command agents ran. The page keeps itself current, follows your light
 or dark setting, loads nothing from the network, and is served to your own machine only.
 
 ![The adbrent status page: two of five devices rented, one free, one in use outside adbrent, one off limits, and a feed of what agents ran into](assets/status-page.png)

@@ -71,6 +71,15 @@ button[aria-pressed="true"] { color: var(--surface); background: var(--ink); bor
 .ev .text .on { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 .ev.feedback .text { font-style: italic; }
 
+.badge { font: 700 12px/1 var(--mono); padding: 5px 8px; border-radius: 3px; background: var(--tape); color: var(--tape-ink); border: 1.5px solid var(--tape-ink); }
+.badge[hidden] { display: none; }
+.debug { padding: 18px 20px; display: grid; gap: 8px; }
+.debug .state { font-weight: 650; }
+.debug .more { color: var(--muted); font-size: 14.5px; }
+.debug h3 { font: 700 15px/1.3 var(--sans); margin-top: 8px; }
+.debug ul { padding-left: 20px; display: grid; gap: 6px; font-size: 15px; }
+.debug li::marker { color: var(--warn); }
+
 footer { margin-top: 28px; color: var(--muted); font-size: 14px; }
 footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
 
@@ -85,6 +94,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
 <main>
   <header>
     <span class="brand">adbrent</span><span class="version" id="version"></span>
+    <span class="badge" id="badge" hidden>debug on</span>
     <span class="live" id="live" role="status">connecting</span>
   </header>
 
@@ -95,10 +105,17 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   <div class="panel" id="devices" role="list" aria-labelledby="devices-title"><div class="empty">Loading</div></div>
 
   <div class="head">
+    <h2 id="debug-title">Debug mode</h2>
+    <div class="pick"><button type="button" id="debug-toggle">Turn debug on</button></div>
+  </div>
+  <div class="panel debug" id="debug" aria-labelledby="debug-title"><div class="more">Loading</div></div>
+
+  <div class="head">
     <h2 id="log-title">What agents ran into</h2>
     <div class="pick" role="group" aria-label="Show">
       <button type="button" id="problems" aria-pressed="true">Problems</button>
       <button type="button" id="notes" aria-pressed="false">Agent feedback</button>
+      <button type="button" id="commands" aria-pressed="false" hidden>Commands</button>
       <button type="button" id="all" aria-pressed="false">Everything</button>
     </div>
   </div>
@@ -120,7 +137,8 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   let drawn = "";       // what is on screen, to redraw only when something changed
   let only = "problems"; // which log entries to show
   const problem = e => e.kind.startsWith("refused") || ["forced", "error", "feedback", "taken back", "wait gave up"].includes(e.kind);
-  const wanted = e => only === "all" || (only === "feedback" ? e.kind === "feedback" : problem(e));
+  const command = e => ["adb", "adbrent", "tool call"].includes(e.kind);
+  const wanted = e => only === "all" || (only === "feedback" ? e.kind === "feedback" : only === "commands" ? command(e) : problem(e));
   let armed = null;     // the serial whose take-back is waiting to be confirmed
   let disarm = 0;
   const now = () => Math.floor(Date.now() / 1000) + skew;
@@ -170,7 +188,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   }
 
   function entry(e) {
-    const kind = e.kind.startsWith("refused") || e.kind === "error" ? "no" : e.kind === "forced" || e.kind === "wait gave up" ? "warn" : e.kind === "feedback" ? "note" : "";
+    const kind = e.kind.startsWith("refused") || e.kind === "error" || (e.kind === "adb" && (e.detail || "").includes("[stopped")) ? "no" : e.kind === "forced" || e.kind === "wait gave up" ? "warn" : e.kind === "feedback" ? "note" : "";
     const row = el("div", "ev" + (e.kind === "feedback" ? " feedback" : "")); row.setAttribute("role", "listitem");
     const time = el("time"); time.dataset.t = e.t;
     const text = el("div", "text");
@@ -183,7 +201,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   function render(focusKey) {
     if (!state) return;
     const log = state.log.filter(wanted).slice(0, 80);
-    const next = JSON.stringify([state.devices, log, only, armed]);
+    const next = JSON.stringify([state.devices, log, only, armed, state.debug, state.report]);
     if (next === drawn && !focusKey) return tick();
     drawn = next;
     const focused = focusKey || (document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null);
@@ -200,7 +218,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
       : "Plug in a device or start an emulator. It appears here as soon as adb sees it.";
 
     $("devices").replaceChildren(...(state.devices.length ? state.devices.map(device) : [el("div", "empty", "Nothing to show yet.")]));
-    const none = only === "feedback" ? "No feedback yet. Agents leave it with `adbrent feedback`."
+    debugPanel();
+    const none = only === "commands" ? "No commands recorded yet. They appear as agents run adb."
+      : only === "feedback" ? "No feedback yet. Agents leave it with `adbrent feedback`."
       : only === "all" ? "Nothing has happened yet."
       : "No problems. Refusals, forced rentals, errors and agent feedback appear here.";
     $("log").replaceChildren(...(log.length ? log.map(entry) : [el("div", "empty", none)]));
@@ -209,6 +229,36 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
       const again = document.querySelector(`[data-key="${focused}"]`) || document.querySelector(`[data-key="take:${focused.split(":")[1]}"]`);
       if (again) again.focus();
     }
+  }
+
+  const picks = { problems: "problems", notes: "feedback", commands: "commands", all: "all" };
+  const press = () => Object.entries(picks).forEach(([id, name]) => $(id).setAttribute("aria-pressed", name === only));
+
+  // What debug mode is, whether it is on, and what the record adds up to.
+  function debugPanel() {
+    const report = state.report || { summary: [], look: [], notes: [], trace: [] };
+    const parts = [el("div", "state", state.debug ? "On: everything agents do at the desk is being recorded." : "Off: only problems are recorded.")];
+    parts.push(el("div", "more", state.debug
+      ? "Rentals, releases, waits and every adb and adbrent command are logged, with who ran them. Command lines can include what agents type into apps, so turn it off when you are done."
+      : "Refusals, forced rentals, errors and agent feedback are always kept. Turn debug on to also record rentals, hold times, waits and every command agents run."));
+    report.summary.forEach(line => parts.push(el("div", "", line)));
+    if (report.look.length) {
+      const list = el("ul"); report.look.forEach(line => list.append(el("li", "", line)));
+      parts.push(el("h3", "", "Worth a look"), list);
+    }
+    if (report.trace.length) parts.push(el("div", "more", "From the trace: " + report.trace.join(" ")));
+    $("debug").replaceChildren(...parts);
+    $("debug-toggle").textContent = state.debug ? "Turn debug off" : "Turn debug on";
+    $("badge").hidden = !state.debug;
+    $("commands").hidden = !state.debug;
+    if (!state.debug && only === "commands") { only = "problems"; press(); }
+  }
+
+  async function toggleDebug() {
+    const to = state && state.debug ? "off" : "on";
+    await fetch(`/api/debug/${to}`, { method: "POST", headers: { "X-Adbrent": "1" } }).catch(() => null);
+    $("say").textContent = `Debug mode is ${to}.`;
+    await refresh();
   }
 
   // Durations and "ago" times move every second, without redrawing or asking again.
@@ -236,9 +286,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
     }
   }
 
-  const picks = { problems: "problems", notes: "feedback", all: "all" };
-  const pick = which => { only = which; Object.entries(picks).forEach(([id, name]) => $(id).setAttribute("aria-pressed", name === which)); render(); };
+  const pick = which => { only = which; press(); render(); };
   Object.entries(picks).forEach(([id, name]) => { $(id).dataset.key = `pick:${name}`; $(id).onclick = () => pick(name); });
+  $("debug-toggle").dataset.key = "debug:toggle"; $("debug-toggle").onclick = toggleDebug;
   refresh();
   setInterval(refresh, 3000);
   setInterval(tick, 1000);

@@ -32,7 +32,8 @@ USAGE
   adbrent serve [--port N]         Live status page on http://127.0.0.1:7878
   adbrent log [-n N] [-f] [--json] What happened: rentals, refusals, waits, feedback;
                                    -f keeps printing as things happen
-  adbrent report [--hours N]       How agents got on with adbrent, and what to look at
+  adbrent report [--hours N] [--json]
+                                   How agents got on with adbrent, and what to look at
   adbrent debug [on|off]           For studying agents: also log routine activity
                                    and every command they run (off by default)
   adbrent feedback [TEXT]          Record a problem or a suggestion (no TEXT: list them)
@@ -377,15 +378,9 @@ fn log(args: &[String]) -> i32 {
 }
 
 fn debug(args: &[String]) -> i32 {
-    let flag = store::home().join("debug");
     let result = match args.first().map(String::as_str) {
-        Some("on") => {
-            std::fs::create_dir_all(store::home()).and_then(|()| std::fs::write(&flag, ""))
-        }
-        Some("off") => match std::fs::remove_file(&flag) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        },
+        Some("on") => store::set_debug(true),
+        Some("off") => store::set_debug(false),
         None => Ok(()),
         Some(other) => {
             eprintln!("adbrent: `debug` takes `on` or `off`, not `{other}`");
@@ -406,14 +401,20 @@ fn debug(args: &[String]) -> i32 {
     0
 }
 
-/// How agents got on with adbrent over the last hours, and what stands out.
-fn report(args: &[String]) -> i32 {
-    let hours: u64 = args
-        .iter()
-        .position(|a| a == "--hours")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(24);
+/// How agents got on with adbrent over a period.
+#[derive(serde::Serialize, Default)]
+pub struct Report {
+    /// The period in numbers: sessions, rentals, refusals, hold times, waits.
+    pub summary: Vec<String>,
+    /// Patterns that usually mean something needs fixing.
+    pub look: Vec<String>,
+    /// What agents reported with `adbrent feedback`.
+    pub notes: Vec<String>,
+    /// What the trace adds: commands run, and which adbrent commands agents used.
+    pub trace: Vec<String>,
+}
+
+pub fn build_report(hours: u64) -> Report {
     let since = store::now().saturating_sub(hours * 3600);
     let events: Vec<serde_json::Value> = store::events()
         .into_iter()
@@ -440,14 +441,15 @@ fn report(args: &[String]) -> i32 {
         60..=3599 => format!("{}m", secs / 60),
         _ => format!("{}h{}m", secs / 3600, secs % 3600 / 60),
     };
-
+    let mut report = Report::default();
     if events.is_empty() {
-        println!(
+        report.summary.push(format!(
             "Nothing was logged in the last {}.",
             count(hours as usize, "hour")
-        );
-        return 0;
+        ));
+        return report;
     }
+
     let rented = of("rented");
     let mut sessions: Vec<String> = events
         .iter()
@@ -456,40 +458,40 @@ fn report(args: &[String]) -> i32 {
         .collect();
     sessions.sort();
     sessions.dedup();
-    if rented.is_empty() {
-        println!(
+    report.summary.push(if rented.is_empty() {
+        format!(
             "The last {}: {} ran into something, {}.",
             count(hours as usize, "hour"),
             count(sessions.len(), "session"),
             count(refused.len(), "refusal")
-        );
+        )
     } else {
-        println!(
+        format!(
             "The last {}: {}, {}, {}.",
             count(hours as usize, "hour"),
             count(sessions.len(), "session"),
             count(rented.len(), "rental"),
             count(refused.len(), "refusal")
-        );
-    }
-
-    let held = middle(
+        )
+    });
+    if let Some(held) = middle(
         of("released")
             .iter()
             .filter_map(|e| e["secs"].as_u64())
             .collect(),
-    );
-    if let Some(held) = held {
-        println!("A device was typically held for {}.", span(held));
+    ) {
+        report
+            .summary
+            .push(format!("A device was typically held for {}.", span(held)));
     }
     let waits = of("wait ended");
     if !waits.is_empty() {
         let typical = middle(waits.iter().filter_map(|e| e["secs"].as_u64()).collect())
             .map_or(String::new(), |s| format!(", typically for {}", span(s)));
-        println!(
+        report.summary.push(format!(
             "{} for a device ended with one{typical}.",
             count(waits.len(), "wait")
-        );
+        ));
     }
     if !refused.is_empty() {
         let mut kinds: Vec<(String, usize)> = Vec::new();
@@ -501,18 +503,17 @@ fn report(args: &[String]) -> i32 {
             }
         }
         kinds.sort_by(|a, b| b.1.cmp(&a.1));
-        println!(
+        report.summary.push(format!(
             "Refusals: {}.",
             kinds
                 .iter()
                 .map(|(k, n)| format!("{n} {}", k.trim_start_matches("refused: ")))
                 .collect::<Vec<_>>()
                 .join(", ")
-        );
+        ));
     }
 
     // Patterns that usually mean something needs fixing, in adbrent or in how it is set up.
-    let mut look = Vec::new();
     let close = |a: &serde_json::Value, b: &serde_json::Value, within: u64| {
         text(a, "owner") == text(b, "owner")
             && text(a, "serial") == text(b, "serial")
@@ -529,20 +530,17 @@ fn report(args: &[String]) -> i32 {
         .filter(|(i, e)| refused[..*i].iter().any(|earlier| close(earlier, e, 120)))
         .count();
     if again > 0 {
-        look.push(format!("{} an agent went back to a device it had just been refused. The refusal may not be clear enough, or the agent has no other device to go to.", count(again, "time")));
+        report.look.push(format!("{} an agent went back to a device it had just been refused. The refusal may not be clear enough, or the agent has no other device to go to.", count(again, "time")));
     }
-    let forced: Vec<_> = rented
-        .iter()
-        .filter(|e| text(e, "detail") == "forced")
-        .collect();
+    let forced: Vec<_> = of("forced");
     let pushed = forced
         .iter()
         .filter(|f| refused.iter().any(|r| close(r, f, 600)))
         .count();
     if pushed > 0 {
-        look.push(format!("{} an agent forced its way onto a device after being refused it. Check whether those refusals were wrong (`adbrent log`), and consider `adbrent ignore` for helpers that stay running.", count(pushed, "time")));
+        report.look.push(format!("{} an agent forced its way onto a device after being refused it. Check whether those refusals were wrong (`adbrent log`), and consider `adbrent ignore` for helpers that stay running.", count(pushed, "time")));
     } else if !forced.is_empty() {
-        look.push(format!(
+        report.look.push(format!(
             "{} used. Each one skipped the check for use outside adbrent.",
             count(forced.len(), "forced rental")
         ));
@@ -559,47 +557,36 @@ fn report(args: &[String]) -> i32 {
             .collect();
         what.sort();
         what.dedup();
-        look.push(format!("{} because something outside adbrent was running on the device: {}. If that is a helper your tools leave behind, `adbrent ignore <part of its name>`.", count(outside, "refusal"), what.join(" | ")));
+        report.look.push(format!("{} because something outside adbrent was running on the device: {}. If that is a helper your tools leave behind, `adbrent ignore <part of its name>`.", count(outside, "refusal"), what.join(" | ")));
     }
     let nothing = refused
         .iter()
         .filter(|e| e["kind"] == "refused: none free")
         .count();
     if nothing >= 3 {
-        look.push(format!(
+        report.look.push(format!(
             "{} an agent found no free device. More sessions are running than there are devices.",
             count(nothing, "time")
         ));
     }
     let gave_up = of("wait gave up").len();
     if gave_up > 0 {
-        look.push(format!(
+        report.look.push(format!(
             "{} gave up before a device came free.",
             count(gave_up, "wait")
         ));
     }
     for e in of("error") {
-        look.push(format!(
+        report.look.push(format!(
             "Error from {}: {}.",
             text(e, "who"),
             text(e, "detail")
         ));
     }
-    let notes = of("feedback");
-    println!();
-    if look.is_empty() && notes.is_empty() {
-        println!("Nothing stands out.");
-    }
-    if !look.is_empty() {
-        println!("Worth a look:");
-        look.iter().for_each(|l| println!("  - {l}"));
-    }
-    if !notes.is_empty() {
-        println!("What agents told you:");
-        notes
-            .iter()
-            .for_each(|e| println!("  - {} ({})", text(e, "detail"), text(e, "who")));
-    }
+    report.notes = of("feedback")
+        .iter()
+        .map(|e| format!("{} ({})", text(e, "detail"), text(e, "who")))
+        .collect();
 
     let commands = of("adb");
     if !commands.is_empty() || !of("adbrent").is_empty() {
@@ -607,11 +594,11 @@ fn report(args: &[String]) -> i32 {
             .iter()
             .filter(|e| text(e, "detail").contains("[stopped"))
             .count();
-        println!(
-            "\nFrom the trace: {} run, {} stopped by adbrent.",
+        report.trace.push(format!(
+            "{} run, {} stopped by adbrent.",
             count(commands.len(), "adb command"),
             stopped
-        );
+        ));
         let mut used: Vec<(String, usize)> = Vec::new();
         for e in of("adbrent") {
             let name = text(e, "detail")
@@ -626,14 +613,53 @@ fn report(args: &[String]) -> i32 {
         }
         used.sort_by(|a, b| b.1.cmp(&a.1));
         if !used.is_empty() {
-            println!(
+            report.trace.push(format!(
                 "adbrent commands run: {}.",
                 used.iter()
                     .map(|(c, n)| format!("{c} ({n})"))
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
+            ));
         }
+    }
+    report
+}
+
+/// Print the report: how agents got on over the last hours, and what stands out.
+fn report(args: &[String]) -> i32 {
+    let hours: u64 = args
+        .iter()
+        .position(|a| a == "--hours")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(24);
+    let report = build_report(hours);
+    if args.iter().any(|a| a == "--json") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+        return 0;
+    }
+    report.summary.iter().for_each(|l| println!("{l}"));
+    if report.summary.len() == 1 && report.summary[0].starts_with("Nothing was logged") {
+        return 0;
+    }
+    println!();
+    if report.look.is_empty() && report.notes.is_empty() {
+        println!("Nothing stands out.");
+    }
+    if !report.look.is_empty() {
+        println!("Worth a look:");
+        report.look.iter().for_each(|l| println!("  - {l}"));
+    }
+    if !report.notes.is_empty() {
+        println!("What agents told you:");
+        report.notes.iter().for_each(|l| println!("  - {l}"));
+    }
+    if let Some((first, rest)) = report.trace.split_first() {
+        println!("\nFrom the trace: {first}");
+        rest.iter().for_each(|l| println!("{l}"));
     } else if !store::debug() {
         println!("\nThis covers problems only. For rentals, hold times, waits and every command agents run, turn the trace on while you study it: `adbrent debug on`.");
     }
