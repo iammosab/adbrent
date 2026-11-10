@@ -317,6 +317,19 @@ pub fn write_session(id: &str, session: &Session) -> io::Result<()> {
     write_json(&session_path(id), session)
 }
 
+/// Forget sessions whose process is gone (a crashed session never says goodbye).
+pub fn sweep_sessions() {
+    let Ok(dir) = fs::read_dir(home().join("sessions")) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if read_json::<Session>(&path).is_none_or(|s| !proc::alive(s.pid, s.start)) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub fn remove_session(id: &str) {
     let _ = fs::remove_file(session_path(id));
 }

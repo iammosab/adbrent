@@ -17,6 +17,9 @@ USAGE
                                    and print its serial; --wait queues for one;
                                    --force takes a device that looks in use
                                    outside adbrent
+  adbrent watch [SERIAL...] [--once]
+                                   Print a line each time a device is rented or
+                                   released; --once stops at the first release
   adbrent release [SERIAL...]      Hand back your devices (all of them by default)
   adbrent release --force SERIAL   Take a device back from whoever holds it
   adbrent release --force --all    Clear every rental
@@ -34,8 +37,12 @@ USAGE
   adbrent install [--shim-only]    Set up ~/.adbrent and the Claude Code plugin
   adbrent uninstall                Remove both
 
-Agents do not need these to work: with the stand-in on PATH, plain `adb`
-rents a free device on first use and keeps it until the session ends.
+FOR AGENTS
+  Plain `adb` rents a free device on first use and keeps going to it until the
+  session ends; `adb -s <serial>` picks one (see `adbrent status`). Never work
+  around a refusal. Nothing free? Run `adbrent rent --wait` as a background
+  command. Starting a helper session? `adbrent share` gives a code for it to
+  `adbrent join`. Something wrong? `adbrent feedback \"<what happened>\"`.
 ";
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -43,6 +50,7 @@ pub fn run(args: Vec<String>) -> i32 {
     match args.first().map(String::as_str) {
         Some("status" | "ls") => status(rest),
         Some("rent") => rent(rest),
+        Some("watch") => watch(rest),
         Some("release") => release(rest),
         Some("share") => share(rest),
         Some("join") => join(rest),
@@ -509,7 +517,85 @@ fn rent(args: &[String]) -> i32 {
             eprintln!("adbrent: waiting for a device to become free...");
             announced = true;
         }
+        // Reading the rental files costs nothing; a retry asks the devices what
+        // is running on them. So retry when a rental changes, or every 10 seconds.
+        let seen = rentals();
+        let retry = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < retry && rentals() == seen && started.elapsed().as_secs() < limit {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+}
+
+fn connected() -> Vec<Device> {
+    adb::real_adb()
+        .map(|real| adb::devices(&real, &[]))
+        .unwrap_or_default()
+}
+
+/// Who rents what, right now: (serial, renter, how they are shown).
+fn rentals() -> Vec<(String, String, String)> {
+    let mut held: Vec<_> = store::leases()
+        .into_iter()
+        .map(|l| (l.serial, l.owner, l.label))
+        .collect();
+    held.sort();
+    held
+}
+
+/// Print a line each time a device is rented or released. Only the rental
+/// files are read, so watching asks nothing of the devices.
+fn watch(args: &[String]) -> i32 {
+    use std::io::Write;
+    let once = args.iter().any(|a| a == "--once");
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let wanted = |serial: &str| only.is_empty() || only.iter().any(|s| *s == serial);
+    let mut devices = connected();
+    let mut before = rentals();
+    loop {
         std::thread::sleep(Duration::from_secs(1));
+        let now = rentals();
+        if now == before {
+            continue;
+        }
+        let renter = |held: &[(String, String, String)], serial: &str| {
+            held.iter()
+                .find(|r| r.0 == serial)
+                .map(|r| (r.1.clone(), r.2.clone()))
+        };
+        let mut lines = Vec::new();
+        let mut freed = false;
+        let serials = before
+            .iter()
+            .chain(&now)
+            .map(|r| r.0.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        for serial in serials.iter().filter(|s| wanted(s)) {
+            if !devices.iter().any(|d| &d.serial == serial) {
+                devices = connected(); // a device plugged in since we started
+            }
+            let name = devices
+                .iter()
+                .find(|d| &d.serial == serial)
+                .map_or(serial.clone(), Device::name);
+            let (was, is) = (renter(&before, serial), renter(&now, serial));
+            // A device can change hands between two looks: that is a release too.
+            if was.is_some() && was.as_ref().map(|w| &w.0) != is.as_ref().map(|i| &i.0) {
+                freed = true;
+                lines.push(format!("released {name}"));
+            }
+            if let Some((_, label)) = is.filter(|i| was.as_ref().map(|w| &w.0) != Some(&i.0)) {
+                lines.push(format!("rented {name} by {label}"));
+            }
+        }
+        before = now;
+        let mut out = std::io::stdout().lock();
+        if lines.iter().any(|l| writeln!(out, "{l}").is_err()) || out.flush().is_err() {
+            return 0; // nobody is reading any more
+        }
+        if once && freed {
+            return 0;
+        }
     }
 }
 

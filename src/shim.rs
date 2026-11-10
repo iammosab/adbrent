@@ -36,9 +36,8 @@ fn rent_or_die(real: &Path, serial: &str, me: &Me, devs: &[Device]) {
 }
 
 fn announce(name: String) {
-    eprintln!(
-        "adbrent: rented {name} to this session. Run `adbrent release` when you no longer need it."
-    );
+    // The one thing a session is told, and only once it uses a device.
+    eprintln!("adbrent: rented {name} to this session; plain `adb` now goes to it. `adbrent release` when done, `adbrent help` for more.");
 }
 
 /// `adb devices`, minus the devices other agents hold.
@@ -51,28 +50,15 @@ fn list(real: &Path, args: Vec<OsString>, me: &Me) -> ! {
         Ok(o) => o,
         Err(_) => exec(real, args),
     };
-    let mut hidden: Vec<String> = store::leases()
-        .into_iter()
-        .filter(|l| !l.allows(me))
-        .map(|l| l.serial)
-        .collect();
-    let mine: Vec<String> = store::leases()
-        .into_iter()
-        .filter(|l| l.allows(me))
-        .map(|l| l.serial)
-        .collect();
-    hidden.extend(
-        store::list("exclude")
-            .into_iter()
-            .filter(|s| !mine.contains(s)),
-    );
+    let leases = store::leases();
+    let excluded = store::list("exclude");
+    let hidden = |serial: &str| match leases.iter().find(|l| l.serial == serial) {
+        Some(lease) => !lease.allows(me),
+        None => excluded.iter().any(|s| s == serial),
+    };
     let mut dropped = 0;
     for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if line
-            .split_whitespace()
-            .next()
-            .is_some_and(|s| hidden.iter().any(|h| h == s))
-        {
+        if line.split_whitespace().next().is_some_and(hidden) {
             dropped += 1;
         } else {
             println!("{line}");

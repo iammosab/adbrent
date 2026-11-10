@@ -14,6 +14,10 @@ fn name(serial: &str, devs: &[Device]) -> String {
         .map_or(serial.to_string(), Device::name)
 }
 
+/// What an agent with nothing free should do. The wait is meant to run in the
+/// background, so the agent is told when it has a device instead of blocking.
+const WAIT: &str = "adbrent: run `adbrent rent --wait` as a background command: it returns holding a device as soon as one is released.";
+
 /// One line telling an agent where to go instead.
 pub fn alternatives(devs: &[Device]) -> String {
     let mut taken: Vec<String> = store::leases().into_iter().map(|l| l.serial).collect();
@@ -24,10 +28,10 @@ pub fn alternatives(devs: &[Device]) -> String {
         .map(Device::name)
         .collect();
     if free.is_empty() {
-        "adbrent: no device is free right now. `adbrent rent --wait` queues for the next one; `adbrent status` shows who holds what.".into()
+        format!("adbrent: no device is free.\n{WAIT}")
     } else {
         format!(
-            "adbrent: free now: {}. Use plain `adb` or `adb -s <serial>` to rent one.",
+            "adbrent: free now: {}. Use plain `adb`, or `adb -s <serial>`.",
             free.join(", ")
         )
     }
@@ -35,7 +39,7 @@ pub fn alternatives(devs: &[Device]) -> String {
 
 pub fn refusal(serial: &str, holder: &Lease, devs: &[Device]) -> String {
     format!(
-        "adbrent: {} is already rented by another agent ({}, for {}). Do not use it.\n{}",
+        "adbrent: {} is already rented by another agent ({}, for {}). Do not use it.\n{}\nadbrent: working for that agent? Get a code from its `adbrent share` and run `adbrent join <code>`.",
         name(serial, devs),
         holder.label,
         holder.age(),
@@ -51,7 +55,7 @@ fn in_use(serial: &str, streams: &[String], devs: &[Device]) -> String {
         .cloned()
         .collect();
     format!(
-        "adbrent: {} is not rented, but something outside adbrent is using it right now (running on the device: {}). Do not use it.\n{}\nadbrent: if that is a helper that is fine to leave running, `adbrent ignore <part of its name>` stops counting it. `adbrent rent --force {serial}` takes the device anyway.\nadbrent: if this refusal was wrong, tell the user and record it: `adbrent feedback \"<what happened>\"`.",
+        "adbrent: {} is not rented, but something outside adbrent is using it right now (on the device: {}). Do not use it.\n{}\nadbrent: if that is wrong, `adbrent rent --force {serial}` takes it; tell the user, or record it with `adbrent feedback \"<what happened>\"`.",
         name(serial, devs),
         streams.join("; "),
         alternatives(&others)
@@ -197,10 +201,12 @@ pub fn pick<'a>(real: &Path, me: &Me, pool: &[&'a Device]) -> Result<&'a Device,
     }
     store::log_event("refused: none free", me, "", &busy.join(", "));
     if busy.is_empty() {
-        return Err("adbrent: every connected device is rented by another agent or off limits.\nadbrent: `adbrent rent --wait` queues for the next one; `adbrent status` shows who holds what.".into());
+        return Err(format!(
+            "adbrent: every connected device is rented by another agent or off limits.\n{WAIT}"
+        ));
     }
     Err(format!(
-        "adbrent: no device is available. In use outside adbrent right now: {}; the rest are rented by other agents or off limits.\nadbrent: `adbrent rent --wait` queues for the next one; `adbrent status` shows who holds what.",
+        "adbrent: no device is available. In use outside adbrent right now: {}; the rest are rented by other agents or off limits.\n{WAIT}",
         busy.join(", ")
     ))
 }

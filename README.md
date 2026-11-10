@@ -30,8 +30,11 @@ adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb` or `adb -
 ```
 
 - **Nothing for agents to learn.** They keep typing `adb`.
-- **No daemon.** One 0.5 MB binary; a rental is one small file. A command on a device the
-  session already holds adds under a millisecond.
+- **No daemon.** One 0.7 MB binary; a rental is one small file. A command on a device the
+  session already holds takes about 1.5 ms longer.
+- **Costs agents almost nothing to read.** Nothing is added to a session's context when it
+  starts. A session hears from adbrent once, in one line, when it first rents a device,
+  and after that only if it is refused.
 - **Self-healing.** A session that closes or crashes loses its rental immediately.
 - **Sees use it does not manage.** Before handing out a device, adbrent asks the device
   whether anything is running on it over adb. A phone that Gradle, Android Studio, scrcpy
@@ -138,7 +141,7 @@ through.
 Plain `adb` hands out a free device that nobody is using, phones and tablets first: a TV,
 a watch or a car unit is handed out only when nothing else is free. When a task needs a
 particular device, the agent should look at `adbrent status` and name it with
-`adb -s <serial>`. The plugin tells Claude Code agents this at the start of each session.
+`adb -s <serial>`. `adbrent help` says this in a short section written for agents.
 
 ## Commands
 
@@ -147,6 +150,8 @@ adbrent status [--json]            Devices and who rents each one
 adbrent rent [SERIAL] [--wait[=SECONDS]] [--force]
                                    Rent a device and print its serial; --wait queues for one;
                                    --force takes one that looks in use outside adbrent
+adbrent watch [SERIAL...] [--once] Print a line each time a device is rented or released;
+                                   --once stops at the first release
 adbrent release [SERIAL...]        Hand back your devices (all of them by default)
 adbrent release --force SERIAL     Take a device back from whoever holds it
 adbrent release --force --all      Clear every rental
@@ -174,6 +179,23 @@ SERIAL          MODEL                STATE   RENTED BY
 R5CT20ABCDE     SM S911B             device  nobody, but in use outside adbrent (logcat)
 emulator-5554   sdk gphone64 arm64   device  -
 ```
+
+## Waiting for a device
+
+When every device is taken, an agent does not have to keep asking.
+
+- **To get the next free device:** `adbrent rent --wait` returns holding a device as soon
+  as one is released (`adbrent rent <serial> --wait` waits for a particular one, and
+  `--wait=600` gives up after ten minutes). Run as a background command, it lets the
+  agent carry on and be told the moment it has a device. Refusals say so.
+- **To be told without renting:** `adbrent watch` prints a line each time a device is
+  rented or released, for example `released 3A021FDJH000XY (Pixel 8)`.
+  `adbrent watch --once` stops at the first release, and naming serials limits it to
+  those devices.
+
+Both only read the rental files while they wait, so waiting asks nothing of the devices.
+Waiting agents are not queued in order: whichever asks first after a release gets the
+device.
 
 ## Live status page
 
@@ -203,7 +225,7 @@ $ adbrent join 4f9a1c      # in the helper session
 
 The helper can then use that device, with or without naming it, for as long as the rental
 lasts. It cannot end the rental; when the renter releases the device or its session ends,
-the sharing ends too. Agents are told about this at the start of each session.
+the sharing ends too. A refused agent is told about this in the refusal itself.
 
 ## Keeping a device away from agents
 
@@ -224,9 +246,9 @@ your attention: every refusal, every forced rental, and anything an agent report
 - `adbrent log` shows the recent entries, so you can see where agents ran into it without
   anyone telling you.
 - Agents can report a problem or a suggestion with `adbrent feedback "<what happened>"`.
-  They are told about this when a session starts, and again in the one refusal that can
-  be mistaken (a device that looks in use outside adbrent). `adbrent feedback` lists what
-  they wrote.
+  They are told about this in the one refusal that can be mistaken (a device that looks
+  in use outside adbrent), and in `adbrent help`. `adbrent feedback` lists what they
+  wrote.
 - `adbrent feedback --issue` prints a link to a GitHub issue filled in with the latest
   report and the few log entries before it, for you to read and submit. Nothing leaves
   your machine unless you open that link and submit it.
@@ -244,8 +266,8 @@ through [`plugin/scripts/hook.sh`](plugin/scripts/hook.sh), which fetches the pr
 a session starts without the right version (`ADBRENT_NO_FETCH=1` turns that off) and
 then hands the hook to it:
 
-- **SessionStart** registers the session, puts the stand-in on the session's PATH, and
-  tells the agent in a few sentences how devices are shared.
+- **SessionStart** registers the session and puts the stand-in on the session's PATH. It
+  adds nothing to the session's context, so sessions that never touch Android pay nothing.
 - **PreToolUse** on MCP tools checks the device named in a tool call (`udid`, `serial`,
   `device_id` and similar arguments). Tool servers talk to adb on their own, so this is
   what keeps them inside the rental.
@@ -286,8 +308,9 @@ with nothing running in between, looks idle between bursts.
 
 Install adbrent and start the sessions. Each one rents a different connected device or
 emulator on its first `adb` command, with no `-s <serial>` and no per-session setup. If
-there are more sessions than devices, the extra ones are told so and can queue with
-`adbrent rent --wait`.
+there are more sessions than devices, the extra ones are told so, and told to run
+`adbrent rent --wait` in the background: it returns holding a device as soon as one is
+released.
 
 ### Does it work with Android emulators?
 

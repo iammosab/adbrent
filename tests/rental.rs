@@ -231,7 +231,10 @@ fn hooks_cover_the_session_lifecycle_and_tool_servers() {
         "session-start",
         r#"{"session_id":"s1","cwd":"/work/app","source":"startup"}"#,
     );
-    assert!(out(&start).contains("additionalContext"));
+    assert!(
+        out(&start).is_empty(),
+        "a session start must add nothing to the session's context"
+    );
     let env = std::fs::read_to_string(d.dir.join("env")).unwrap();
     assert!(
         env.contains("export ADBRENT_SESSION='s1'") && env.contains("/shim'"),
@@ -393,10 +396,7 @@ fn the_plugin_matches_this_version_and_runs_hooks_through_the_binary() {
         .write_all(br#"{"session_id":"p1","cwd":"/w","source":"startup"}"#)
         .unwrap();
     let result = out(&child.wait_with_output().unwrap());
-    assert!(
-        result.contains("shared between agents through adbrent"),
-        "{result}"
-    );
+    assert!(result.is_empty(), "{result}");
     assert!(std::fs::read_to_string(d.dir.join("env"))
         .unwrap()
         .contains("ADBRENT_SESSION='p1'"));
@@ -435,7 +435,7 @@ fn leftovers_from_a_rental_and_ignored_helpers_are_not_outside_use() {
     // Something that has been running since long before any rental is outside use...
     let c = adb("c", "1-00:00:00", &["-s", "AAA", "shell", "id"]);
     assert_eq!(c.status.code(), Some(1));
-    assert!(err(&c).contains("adbrent ignore"), "{}", err(&c));
+    assert!(err(&c).contains("rent --force AAA"), "{}", err(&c));
 
     // ...until the person in charge says to ignore it.
     assert_eq!(d.rent("c", &["ignore", "logcat -v"]).status.code(), Some(0));
@@ -788,4 +788,47 @@ fn two_copies_on_one_path_never_hand_off_to_each_other() {
         "{}",
         err(&caught)
     );
+}
+
+#[test]
+fn watch_reports_rentals_and_releases_and_a_wait_gets_the_freed_device() {
+    use std::io::{BufRead, BufReader};
+    let d = Desk::new("watch");
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    d.adb("b", &["-s", "BBB", "shell", "id"]);
+    let mut watcher = d
+        .command(
+            env!("CARGO_BIN_EXE_adbrent").into(),
+            "viewer",
+            &["watch", "--once"],
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A session with nothing free waits in the background, as agents are told to.
+    let waiter = d
+        .command(
+            env!("CARGO_BIN_EXE_adbrent").into(),
+            "c",
+            &["rent", "--wait=20"],
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(out(&d.rent("a", &["release"])).contains("Released AAA"));
+
+    let mut line = String::new();
+    BufReader::new(watcher.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert_eq!(line, "released AAA (Pixel A)\n");
+    assert!(
+        watcher.wait().unwrap().success(),
+        "--once stops at the first release"
+    );
+    let got = waiter.wait_with_output().unwrap();
+    assert_eq!(out(&got), "AAA\n", "{}", err(&got));
+    assert!(err(&d.adb("e", &["shell", "id"])).contains("as a background command"));
 }

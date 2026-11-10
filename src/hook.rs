@@ -3,7 +3,7 @@
 
 use crate::desk::{self, Claim};
 use crate::store::{self, Session};
-use crate::{adb, install};
+use crate::{adb, install, proc};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 
@@ -23,16 +23,26 @@ pub fn run(event: Option<&str>) -> i32 {
     0
 }
 
-/// Register the session, put the adb stand-in on its PATH, and tell the agent
-/// how devices are shared.
+/// Register the session and put the adb stand-in on its PATH. Nothing is added
+/// to the session's context: an agent hears from adbrent only when it uses a
+/// device, so sessions that never touch Android pay nothing.
 fn session_start(id: &str, v: &Value) {
-    let agent = store::anchor();
+    // Claude Code names its own process to its hooks; otherwise find the agent above us.
+    let agent = std::env::var("CLAUDE_PID")
+        .ok()
+        .and_then(|pid| proc::info(pid.parse().ok()?))
+        .map(|p| proc::Proc {
+            name: "claude".into(),
+            ..p
+        })
+        .unwrap_or_else(store::anchor);
     let session = Session {
         pid: agent.pid,
         start: agent.start,
         name: agent.name,
         cwd: v["cwd"].as_str().unwrap_or_default().to_string(),
     };
+    store::sweep_sessions();
     let _ = store::write_session(id, &session);
     // After /clear the same process carries on under a new session id: keep its devices.
     let _ = store::adopt(&store::me_for_session(id));
@@ -56,18 +66,6 @@ fn session_start(id: &str, v: &Value) {
             }
         }
     }
-    let context = "Android devices on this machine are shared between agents through adbrent. \
-        Use `adb` as usual: your first device command rents a free device for this session, and plain `adb` \
-        (no -s) keeps going to it. A device rented by another agent is refused with a message naming the free \
-        ones; never work around a refusal. `adbrent status` lists devices, models and renters (name one with \
-        `adb -s <serial>` when the task needs a particular device), `adbrent rent --wait` \
-        queues when all are taken, and `adbrent release` hands yours back once you no longer need it. \
-        To let a helper session you start use your device, run `adbrent share` and give it the code; \
-        it runs `adbrent join <code>`. If adbrent gets in your way or a refusal looks wrong, record it with `adbrent feedback \"<what happened>\"`; the user reads those.";
-    println!(
-        "{}",
-        json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})
-    );
 }
 
 /// Device ids named in a tool call: string values under keys such as `udid`,
