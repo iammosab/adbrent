@@ -1,6 +1,7 @@
 # adbrent: one Android device per AI agent
 
 [![Release](https://img.shields.io/github/v/release/iammosab/adbrent)](https://github.com/iammosab/adbrent/releases)
+[![crates.io](https://img.shields.io/crates/v/adbrent)](https://crates.io/crates/adbrent)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms: macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#in-claude-code)
@@ -69,7 +70,7 @@ claude plugin install adbrent@adbrent
 ### With cargo
 
 ```sh
-cargo install --git https://github.com/iammosab/adbrent
+cargo install adbrent
 adbrent install
 ```
 
