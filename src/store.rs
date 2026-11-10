@@ -188,6 +188,14 @@ pub fn acquire(serial: &str, me: &Me) -> io::Result<Result<bool, Lease>> {
             new = false;
         } else {
             record_span(&l);
+            log_as(
+                "released",
+                &l.label,
+                &l.owner,
+                serial,
+                "its session was gone",
+                Some(now().saturating_sub(l.since)),
+            );
         }
     }
     write_json(&lease_path(serial), &lease)?;
@@ -242,12 +250,23 @@ pub fn leave(owner: &str) -> io::Result<()> {
 }
 
 /// Remove rentals matching `pick`, plus any whose owner has died. Returns the
-/// serials that `pick` released.
-pub fn release(pick: impl Fn(&Lease) -> bool) -> io::Result<Vec<String>> {
+/// serials that `pick` released. `why` goes in the log beside each of them.
+pub fn release(pick: impl Fn(&Lease) -> bool, why: Option<&str>) -> io::Result<Vec<String>> {
     let _lock = lock()?;
     let mut released = Vec::new();
     let Ok(dir) = fs::read_dir(home().join("leases")) else {
         return Ok(released);
+    };
+    let ended = |lease: &Lease, why: &str| {
+        record_span(lease);
+        log_as(
+            "released",
+            &lease.label,
+            &lease.owner,
+            &lease.serial,
+            why,
+            Some(now().saturating_sub(lease.since)),
+        );
     };
     for entry in dir.flatten() {
         let path = entry.path();
@@ -256,11 +275,14 @@ pub fn release(pick: impl Fn(&Lease) -> bool) -> io::Result<Vec<String>> {
         };
         if pick(&lease) {
             fs::remove_file(&path)?;
-            record_span(&lease);
+            match why {
+                Some(why) => ended(&lease, why),
+                None => record_span(&lease),
+            }
             released.push(lease.serial);
         } else if !lease.alive() {
             let _ = fs::remove_file(&path);
-            record_span(&lease);
+            ended(&lease, "its session was gone");
         }
     }
     Ok(released)
@@ -395,17 +417,39 @@ pub fn me_for_session(id: &str) -> Me {
     }
 }
 
-/// Note something worth the user's attention: a refusal, a forced rental, an
-/// agent's feedback. Kept on this machine only; never allowed to fail a command.
+/// Is the trace on? With it, every adb command and adbrent command is logged
+/// too, for studying how agents behave. Turned on with `adbrent debug on`.
+pub fn debug() -> bool {
+    env::var_os("ADBRENT_DEBUG").is_some_and(|v| !v.is_empty()) || home().join("debug").exists()
+}
+
+/// Note something that happened: a rental, a refusal, a wait, an agent's
+/// feedback. Kept on this machine only; never allowed to fail a command.
 pub fn log_event(kind: &str, me: &Me, serial: &str, detail: &str) {
+    log_as(kind, &me.label, &me.owner, serial, detail, None);
+}
+
+/// The same, with how long something took or lasted, in seconds.
+pub fn log_timed(kind: &str, me: &Me, serial: &str, detail: &str, secs: u64) {
+    log_as(kind, &me.label, &me.owner, serial, detail, Some(secs));
+}
+
+/// Set while a command is waiting for a device: each retry would otherwise be
+/// logged as one more refusal.
+pub static WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn log_as(kind: &str, who: &str, owner: &str, serial: &str, detail: &str, secs: Option<u64>) {
     use std::io::Write;
+    if kind.starts_with("refused") && WAITING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let path = home().join("log.jsonl");
     let line = serde_json::json!({
-        "t": now(), "kind": kind, "who": me.label, "serial": serial,
-        "detail": detail, "version": env!("CARGO_PKG_VERSION"),
+        "t": now(), "kind": kind, "who": who, "owner": owner, "serial": serial,
+        "detail": detail, "secs": secs, "version": env!("CARGO_PKG_VERSION"),
     });
-    // Keep the log small: past 1 MB, drop the older half.
-    if fs::metadata(&path).is_ok_and(|m| m.len() > 1_000_000) {
+    // Keep the log small: past 4 MB, drop the older half.
+    if fs::metadata(&path).is_ok_and(|m| m.len() > 4_000_000) {
         if let Ok(text) = fs::read_to_string(&path) {
             let lines: Vec<&str> = text.lines().collect();
             let _ = fs::write(&path, lines[lines.len() / 2..].join("\n") + "\n");

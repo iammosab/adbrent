@@ -7,14 +7,40 @@ use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{exit, Stdio};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+/// With the trace on (`adbrent debug on`): who is running which adb command,
+/// and since when. Read when the command is handed off or stopped.
+static TRACE: OnceLock<(String, String, String, Instant)> = OnceLock::new();
+static TARGET: Mutex<String> = Mutex::new(String::new());
+
+fn target(serial: &str) {
+    if let Ok(mut t) = TARGET.lock() {
+        *t = serial.to_string();
+    }
+}
+
+fn traced(outcome: &str) {
+    if let Some((who, owner, command, started)) = TRACE.get() {
+        let serial = TARGET.lock().map(|t| t.clone()).unwrap_or_default();
+        let detail = format!(
+            "{command}  [{outcome}, {:.1} ms in adbrent]",
+            started.elapsed().as_micros() as f64 / 1000.0
+        );
+        store::log_as("adb", who, owner, &serial, &detail, None);
+    }
+}
 
 fn exec(real: &Path, args: Vec<OsString>) -> ! {
+    traced("passed to adb");
     let err = adb::command(real).args(args).exec();
     eprintln!("adbrent: cannot run {}: {err}", real.display());
     exit(127)
 }
 
 fn die(msg: String) -> ! {
+    traced("stopped");
     eprintln!("{msg}");
     exit(1)
 }
@@ -67,16 +93,29 @@ fn list(real: &Path, args: Vec<OsString>, me: &Me) -> ! {
     if dropped > 0 {
         eprintln!("adbrent: {dropped} device(s) not listed: rented by other agents or off limits. `adbrent status` shows them.");
     }
+    traced("listed");
     exit(out.status.code().unwrap_or(1))
 }
 
 pub fn run(mut args: Vec<OsString>) -> ! {
     // Reached as the "real adb" of another adbrent: stop, never hand off again.
     if std::env::var_os(adb::HANDOFF).is_some() {
+        store::log_event(
+            "error",
+            &store::me(),
+            "",
+            "reached as the real adb of another adbrent: two copies are on PATH",
+        );
         eprintln!("adbrent: this adb is an adbrent stand-in that another adbrent took for the real adb (two copies are on PATH). Set ADBRENT_REAL_ADB to the real adb.");
         exit(126)
     }
     let Some(real) = adb::real_adb() else {
+        store::log_event(
+            "error",
+            &store::me(),
+            "",
+            "cannot find the real adb on PATH",
+        );
         eprintln!("adbrent: cannot find the real adb on PATH (set ADBRENT_REAL_ADB to its path)");
         exit(127)
     };
@@ -90,6 +129,13 @@ pub fn run(mut args: Vec<OsString>) -> ! {
     };
 
     let me = store::me();
+    if store::debug() {
+        let command: String = format!("adb {}", text.join(" "))
+            .chars()
+            .take(200)
+            .collect();
+        let _ = TRACE.set((me.label.clone(), me.owner.clone(), command, Instant::now()));
+    }
     if cmd == "devices" {
         list(&real, args, &me);
     }
@@ -116,6 +162,9 @@ pub fn run(mut args: Vec<OsString>) -> ! {
             .ok()
             .filter(|s| !s.is_empty())
     });
+    if let Some(serial) = &explicit {
+        target(serial);
+    }
     // The common case: a device this session already holds. No adb round trip.
     if explicit
         .as_deref()
@@ -177,6 +226,7 @@ pub fn run(mut args: Vec<OsString>) -> ! {
                 .join(", ")
         )),
     };
+    target(&chosen);
     for i in p.strip.iter().rev() {
         args.remove(*i);
     }

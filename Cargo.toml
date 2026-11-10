@@ -1,6 +1,6 @@
 [package]
 name = "adbrent"
-version = "0.3.3"
+version = "0.4.0"
 edition = "2021"
 description = "One Android device per AI agent: an adb device lock for parallel Claude Code and other coding-agent sessions"
 license = "MIT"

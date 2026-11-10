@@ -30,7 +30,10 @@ USAGE
   adbrent ignore [TEXT]            Stop counting on-device commands containing TEXT
                                    as outside use (no TEXT: list; --remove TEXT)
   adbrent serve [--port N]         Live status page on http://127.0.0.1:7878
-  adbrent log [-n N] [--json]      Recent refusals, forced rentals and feedback
+  adbrent log [-n N] [-f] [--json] What happened: rentals, refusals, waits, feedback;
+                                   -f keeps printing as things happen
+  adbrent report [--hours N]       How agents got on with adbrent, and what to look at
+  adbrent debug [on|off]           Also log every adb and adbrent command agents run
   adbrent feedback [TEXT]          Record a problem or a suggestion (no TEXT: list them)
   adbrent feedback --issue         Print a GitHub issue link filled in from the latest one
   adbrent env                      Shell line that puts the adb stand-in on PATH
@@ -47,6 +50,15 @@ FOR AGENTS
 
 pub fn run(args: Vec<String>) -> i32 {
     let rest = args.get(1..).unwrap_or_default();
+    // With the trace on, note which adbrent commands agents reach for.
+    let quiet = ["hook", "serve", "log", "report", "debug", "watch"];
+    if store::debug() && args.first().is_some_and(|c| !quiet.contains(&c.as_str())) {
+        let command: String = format!("adbrent {}", args.join(" "))
+            .chars()
+            .take(200)
+            .collect();
+        store::log_event("adbrent", &store::me(), "", &command);
+    }
     match args.first().map(String::as_str) {
         Some("status" | "ls") => status(rest),
         Some("rent") => rent(rest),
@@ -58,6 +70,8 @@ pub fn run(args: Vec<String>) -> i32 {
         Some("ignore") => edit_list("ignore", rest, "Nothing is ignored."),
         Some("serve") => serve::run(rest),
         Some("log") => log(rest),
+        Some("report") => report(rest),
+        Some("debug") => debug(rest),
         Some("feedback") => feedback(rest),
         Some("env") => {
             println!("{}", install::env_lines(None));
@@ -103,7 +117,7 @@ pub struct Row {
 /// Every connected device and every rental. `probe` reports what is using an
 /// unrented device outside adbrent; it is asked about all of them at once.
 pub fn rows(probe: &(dyn Fn(&Path, &str) -> Vec<String> + Sync)) -> Vec<Row> {
-    let _ = store::release(|_| false); // sweep rentals whose owner is gone
+    let _ = store::release(|_| false, None); // sweep rentals whose owner is gone
     let me = store::me();
     let leases = store::leases();
     let excluded = store::list("exclude");
@@ -245,6 +259,7 @@ fn share(args: &[String]) -> i32 {
     };
     match store::share(&serial, &me) {
         Ok(Some(code)) => {
+            store::log_event("shared", &me, &serial, "made a code for a helper session");
             println!("{code}");
             eprintln!("adbrent: a session that runs `adbrent join {code}` can use {serial} alongside this one, for as long as this rental lasts.");
             0
@@ -268,6 +283,7 @@ fn join(args: &[String]) -> i32 {
     let me = store::me();
     match store::join(code, &me) {
         Ok(Some(serial)) => {
+            store::log_event("joined", &me, &serial, "let in by its renter");
             println!("{serial}");
             eprintln!("adbrent: this session may now use {serial} alongside its renter. Plain `adb` goes to it.");
             0
@@ -312,23 +328,306 @@ fn describe(event: &serde_json::Value) -> String {
 }
 
 fn log(args: &[String]) -> i32 {
+    use std::io::Write;
     let count = args
         .iter()
         .position(|a| a == "-n")
         .and_then(|i| args.get(i + 1))
         .and_then(|n| n.parse().ok())
         .unwrap_or(30);
+    let json = args.iter().any(|a| a == "--json");
+    let follow = args.iter().any(|a| a == "-f" || a == "--follow");
     let events = store::events();
     let recent = &events[events.len().saturating_sub(count)..];
-    if args.iter().any(|a| a == "--json") {
+    if json && !follow {
         println!(
             "{}",
             serde_json::to_string_pretty(recent).unwrap_or_default()
         );
-    } else if recent.is_empty() {
+        return 0;
+    }
+    if recent.is_empty() && !follow {
         println!("Nothing logged yet.");
+        return 0;
+    }
+    let show = |e: &serde_json::Value| if json { e.to_string() } else { describe(e) };
+    recent.iter().for_each(|e| println!("{}", show(e)));
+    // Following: print each new entry as it is written, until nobody is reading.
+    let mut seen = events.len();
+    if follow {
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let events = store::events();
+            if events.len() < seen {
+                seen = 0; // the log was trimmed
+            }
+            let mut out = std::io::stdout().lock();
+            if events[seen..]
+                .iter()
+                .any(|e| writeln!(out, "{}", show(e)).is_err())
+                || out.flush().is_err()
+            {
+                return 0;
+            }
+            seen = events.len();
+        }
+    }
+    0
+}
+
+fn debug(args: &[String]) -> i32 {
+    let flag = store::home().join("debug");
+    let result = match args.first().map(String::as_str) {
+        Some("on") => {
+            std::fs::create_dir_all(store::home()).and_then(|()| std::fs::write(&flag, ""))
+        }
+        Some("off") => match std::fs::remove_file(&flag) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+        None => Ok(()),
+        Some(other) => {
+            eprintln!("adbrent: `debug` takes `on` or `off`, not `{other}`");
+            return 2;
+        }
+    };
+    if let Err(e) = result {
+        eprintln!("adbrent: cannot change the trace: {e}");
+        return 1;
+    }
+    if store::debug() {
+        println!(
+            "The trace is on: every adb command and adbrent command is logged, with who ran it."
+        );
+        println!("Command lines can contain what agents type into apps, so turn it off when you are done: `adbrent debug off`.");
+        println!("Watch it live with `adbrent log -f`; sum it up with `adbrent report`.");
     } else {
-        recent.iter().for_each(|e| println!("{}", describe(e)));
+        println!("The trace is off. Rentals, refusals, waits and feedback are still logged.");
+    }
+    0
+}
+
+/// How agents got on with adbrent over the last hours, and what stands out.
+fn report(args: &[String]) -> i32 {
+    let hours: u64 = args
+        .iter()
+        .position(|a| a == "--hours")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(24);
+    let since = store::now().saturating_sub(hours * 3600);
+    let events: Vec<serde_json::Value> = store::events()
+        .into_iter()
+        .filter(|e| e["t"].as_u64().unwrap_or(0) >= since)
+        .collect();
+    let text = |e: &serde_json::Value, key: &str| e[key].as_str().unwrap_or_default().to_string();
+    let of = |kind: &str| {
+        events
+            .iter()
+            .filter(|e| e["kind"] == kind)
+            .collect::<Vec<_>>()
+    };
+    let refused: Vec<&serde_json::Value> = events
+        .iter()
+        .filter(|e| text(e, "kind").starts_with("refused"))
+        .collect();
+    let count = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    let middle = |mut secs: Vec<u64>| {
+        secs.sort_unstable();
+        secs.get(secs.len() / 2).copied()
+    };
+    let span = |secs: u64| match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        _ => format!("{}h{}m", secs / 3600, secs % 3600 / 60),
+    };
+
+    if events.is_empty() {
+        println!(
+            "Nothing was logged in the last {}.",
+            count(hours as usize, "hour")
+        );
+        return 0;
+    }
+    let rented = of("rented");
+    let mut sessions: Vec<String> = events
+        .iter()
+        .map(|e| text(e, "owner"))
+        .filter(|o| !o.is_empty())
+        .collect();
+    sessions.sort();
+    sessions.dedup();
+    println!(
+        "The last {}: {}, {}, {}.",
+        count(hours as usize, "hour"),
+        count(sessions.len(), "session"),
+        count(rented.len(), "rental"),
+        count(refused.len(), "refusal")
+    );
+
+    let held = middle(
+        of("released")
+            .iter()
+            .filter_map(|e| e["secs"].as_u64())
+            .collect(),
+    );
+    if let Some(held) = held {
+        println!("A device was typically held for {}.", span(held));
+    }
+    let waits = of("wait ended");
+    if !waits.is_empty() {
+        let typical = middle(waits.iter().filter_map(|e| e["secs"].as_u64()).collect())
+            .map_or(String::new(), |s| format!(", typically for {}", span(s)));
+        println!(
+            "{} for a device ended with one{typical}.",
+            count(waits.len(), "wait")
+        );
+    }
+    if !refused.is_empty() {
+        let mut kinds: Vec<(String, usize)> = Vec::new();
+        for e in &refused {
+            let kind = text(e, "kind");
+            match kinds.iter_mut().find(|k| k.0 == kind) {
+                Some(k) => k.1 += 1,
+                None => kinds.push((kind, 1)),
+            }
+        }
+        kinds.sort_by(|a, b| b.1.cmp(&a.1));
+        println!(
+            "Refusals: {}.",
+            kinds
+                .iter()
+                .map(|(k, n)| format!("{n} {}", k.trim_start_matches("refused: ")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    // Patterns that usually mean something needs fixing, in adbrent or in how it is set up.
+    let mut look = Vec::new();
+    let close = |a: &serde_json::Value, b: &serde_json::Value, within: u64| {
+        text(a, "owner") == text(b, "owner")
+            && text(a, "serial") == text(b, "serial")
+            && !text(a, "serial").is_empty()
+            && b["t"]
+                .as_u64()
+                .unwrap_or(0)
+                .saturating_sub(a["t"].as_u64().unwrap_or(0))
+                <= within
+    };
+    let again = refused
+        .iter()
+        .enumerate()
+        .filter(|(i, e)| refused[..*i].iter().any(|earlier| close(earlier, e, 120)))
+        .count();
+    if again > 0 {
+        look.push(format!("{} an agent went back to a device it had just been refused. The refusal may not be clear enough, or the agent has no other device to go to.", count(again, "time")));
+    }
+    let forced: Vec<_> = rented
+        .iter()
+        .filter(|e| text(e, "detail") == "forced")
+        .collect();
+    let pushed = forced
+        .iter()
+        .filter(|f| refused.iter().any(|r| close(r, f, 600)))
+        .count();
+    if pushed > 0 {
+        look.push(format!("{} an agent forced its way onto a device after being refused it. Check whether those refusals were wrong (`adbrent log`), and consider `adbrent ignore` for helpers that stay running.", count(pushed, "time")));
+    } else if !forced.is_empty() {
+        look.push(format!(
+            "{} used. Each one skipped the check for use outside adbrent.",
+            count(forced.len(), "forced rental")
+        ));
+    }
+    let outside = refused
+        .iter()
+        .filter(|e| e["kind"] == "refused: outside use")
+        .count();
+    if outside >= 3 {
+        let mut what: Vec<String> = refused
+            .iter()
+            .filter(|e| e["kind"] == "refused: outside use")
+            .map(|e| text(e, "detail"))
+            .collect();
+        what.sort();
+        what.dedup();
+        look.push(format!("{} because something outside adbrent was running on the device: {}. If that is a helper your tools leave behind, `adbrent ignore <part of its name>`.", count(outside, "refusal"), what.join(" | ")));
+    }
+    let nothing = refused
+        .iter()
+        .filter(|e| e["kind"] == "refused: none free")
+        .count();
+    if nothing >= 3 {
+        look.push(format!(
+            "{} an agent found no free device. More sessions are running than there are devices.",
+            count(nothing, "time")
+        ));
+    }
+    let gave_up = of("wait gave up").len();
+    if gave_up > 0 {
+        look.push(format!(
+            "{} gave up before a device came free.",
+            count(gave_up, "wait")
+        ));
+    }
+    for e in of("error") {
+        look.push(format!(
+            "Error from {}: {}.",
+            text(e, "who"),
+            text(e, "detail")
+        ));
+    }
+    let notes = of("feedback");
+    println!();
+    if look.is_empty() && notes.is_empty() {
+        println!("Nothing stands out.");
+    }
+    if !look.is_empty() {
+        println!("Worth a look:");
+        look.iter().for_each(|l| println!("  - {l}"));
+    }
+    if !notes.is_empty() {
+        println!("What agents told you:");
+        notes
+            .iter()
+            .for_each(|e| println!("  - {} ({})", text(e, "detail"), text(e, "who")));
+    }
+
+    let commands = of("adb");
+    if !commands.is_empty() || !of("adbrent").is_empty() {
+        let stopped = commands
+            .iter()
+            .filter(|e| text(e, "detail").contains("[stopped"))
+            .count();
+        println!(
+            "\nFrom the trace: {} run, {} stopped by adbrent.",
+            count(commands.len(), "adb command"),
+            stopped
+        );
+        let mut used: Vec<(String, usize)> = Vec::new();
+        for e in of("adbrent") {
+            let name = text(e, "detail")
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string();
+            match used.iter_mut().find(|u| u.0 == name) {
+                Some(u) => u.1 += 1,
+                None => used.push((name, 1)),
+            }
+        }
+        used.sort_by(|a, b| b.1.cmp(&a.1));
+        if !used.is_empty() {
+            println!(
+                "adbrent commands run: {}.",
+                used.iter()
+                    .map(|(c, n)| format!("{c} ({n})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    } else if !store::debug() {
+        println!("\nFor every adb command agents run, turn the trace on: `adbrent debug on`.");
     }
     0
 }
@@ -495,6 +794,15 @@ fn rent(args: &[String]) -> i32 {
         };
         let blocker = match outcome {
             Ok(serial) => {
+                if announced {
+                    store::log_timed(
+                        "wait ended",
+                        &me,
+                        &serial,
+                        "got a device",
+                        started.elapsed().as_secs(),
+                    );
+                }
                 println!("{serial}");
                 return 0;
             }
@@ -508,12 +816,26 @@ fn rent(args: &[String]) -> i32 {
             }
         };
         if started.elapsed().as_secs() >= limit {
+            store::log_timed(
+                "wait gave up",
+                &me,
+                serial.as_deref().unwrap_or_default(),
+                "no device came free in time",
+                started.elapsed().as_secs(),
+            );
             eprintln!(
                 "adbrent: gave up waiting after {limit}s. `adbrent status` shows who holds what."
             );
             return 1;
         }
         if !announced {
+            store::log_event(
+                "waiting",
+                &me,
+                serial.as_deref().unwrap_or_default(),
+                "every device was taken",
+            );
+            store::WAITING.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("adbrent: waiting for a device to become free...");
             announced = true;
         }
@@ -612,7 +934,12 @@ fn release(args: &[String]) -> i32 {
     if serials.is_empty() && !force {
         let _ = store::leave(&me.owner); // step out of devices shared with this session
     }
-    let result = store::release(|l| named(l) && (force || l.owner == me.owner));
+    let why = if force {
+        "taken back with --force"
+    } else {
+        "handed back by its renter"
+    };
+    let result = store::release(|l| named(l) && (force || l.owner == me.owner), Some(why));
     match result {
         Ok(done) if done.is_empty() => {
             // Naming a device someone else holds is the one case worth an error.

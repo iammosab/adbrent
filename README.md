@@ -167,7 +167,10 @@ adbrent exclude [SERIAL]           Put a device off limits to agents (no SERIAL:
 adbrent serve [--port N]           Live status page on http://127.0.0.1:7878
 adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
                                    outside use (no TEXT: list; --remove TEXT: undo)
-adbrent log [-n N] [--json]        Recent refusals, forced rentals and feedback
+adbrent log [-n N] [-f] [--json]   What happened: rentals, refusals, waits, feedback;
+                                   -f keeps printing as things happen
+adbrent report [--hours N]         How agents got on with adbrent, and what to look at
+adbrent debug [on|off]             Also log every adb and adbrent command agents run
 adbrent feedback [TEXT]            Record a problem or a suggestion (no TEXT: list them)
 adbrent feedback --issue           Print a GitHub issue link filled in from the latest one
 adbrent env                        Shell line that puts the adb stand-in on PATH
@@ -209,8 +212,9 @@ adbrent serve
 ```
 
 opens a page on `http://127.0.0.1:7878` that shows every device, who rents it and for how
-long, what is using a device outside adbrent, and a feed of refusals, forced rentals and
-agent feedback, which you can narrow to feedback alone. A rented device has a **Take
+long, what is using a device outside adbrent, and a feed of what agents ran into
+(refusals, forced rentals, errors and feedback), which you can narrow to feedback alone
+or widen to everything that happened. A rented device has a **Take
 back** button that asks you to confirm. The page keeps itself current, follows your light
 or dark setting, loads nothing from the network, and is served to your own machine only.
 
@@ -244,20 +248,47 @@ not see it in `adb devices`. `adbrent exclude` lists the excluded devices and
 `adbrent exclude --remove <serial>` brings one back. Use it for your personal phone, or
 for a device you want left alone for a while.
 
-## Feedback from agents
+## Seeing how agents get on with it
 
-adbrent keeps a small log on your machine, in `~/.adbrent/log.jsonl`, of the moments worth
-your attention: every refusal, every forced rental, and anything an agent reports.
+adbrent keeps a log on your machine, in `~/.adbrent/log.jsonl`, of what happens at the
+desk: rentals and releases (with how long each device was held), refusals and why, waits,
+forced rentals, shared devices, errors, and anything an agent reports.
 
-- `adbrent log` shows the recent entries, so you can see where agents ran into it without
-  anyone telling you.
-- Agents can report a problem or a suggestion with `adbrent feedback "<what happened>"`.
+- **`adbrent log`** shows the recent entries, and `adbrent log -f` keeps printing as things
+  happen, so you can watch agents work.
+- **`adbrent report`** sums up the last 24 hours (`--hours N` for another span) and points
+  out what usually needs fixing:
+
+  ```console
+  $ adbrent report
+  The last 24 hours: 2 sessions, 2 rentals, 4 refusals.
+  Refusals: 3 outside use, 1 rented.
+
+  Worth a look:
+    - 2 times an agent went back to a device it had just been refused. The refusal may not
+      be clear enough, or the agent has no other device to go to.
+    - 1 time an agent forced its way onto a device after being refused it. Check whether
+      those refusals were wrong (`adbrent log`), and consider `adbrent ignore` for helpers
+      that stay running.
+  What agents told you:
+    - Refused on the Pixel 4a three times, but that test run is my own (claude session
+      9f12ab07 in chat-app)
+  ```
+
+- **`adbrent debug on`** turns on a trace for when you want the detail: every `adb`
+  command and every `adbrent` command agents run is logged too, with who ran it, which
+  device it went to, whether it was passed on or stopped, and how long adbrent took. It
+  adds about 0.15 ms per command. Command lines can contain what agents type into apps,
+  so turn it off when you are done: `adbrent debug off`.
+- **Agents can report a problem themselves** with `adbrent feedback "<what happened>"`.
   They are told about this in the one refusal that can be mistaken (a device that looks
   in use outside adbrent), and in `adbrent help`. `adbrent feedback` lists what they
   wrote.
-- `adbrent feedback --issue` prints a link to a GitHub issue filled in with the latest
-  report and the few log entries before it, for you to read and submit. Nothing leaves
-  your machine unless you open that link and submit it.
+- **`adbrent feedback --issue`** prints a link to a GitHub issue filled in with the latest
+  report and the few log entries before it, for you to read and submit.
+
+None of this is shown to agents, so it costs them nothing, and nothing leaves your machine
+unless you open that link and submit it.
 
 ## How it works
 

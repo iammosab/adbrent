@@ -97,8 +97,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   <div class="head">
     <h2 id="log-title">What agents ran into</h2>
     <div class="pick" role="group" aria-label="Show">
-      <button type="button" id="all" aria-pressed="true">Everything</button>
+      <button type="button" id="problems" aria-pressed="true">Problems</button>
       <button type="button" id="notes" aria-pressed="false">Agent feedback</button>
+      <button type="button" id="all" aria-pressed="false">Everything</button>
     </div>
   </div>
   <div class="panel" id="log" role="list" aria-labelledby="log-title"><div class="empty">Loading</div></div>
@@ -117,7 +118,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   let state = null;     // the last answer from adbrent
   let skew = 0;         // its clock minus ours, so times tick without asking again
   let drawn = "";       // what is on screen, to redraw only when something changed
-  let only = "all";     // which log entries to show
+  let only = "problems"; // which log entries to show
+  const problem = e => e.kind.startsWith("refused") || ["forced", "error", "feedback", "taken back", "wait gave up"].includes(e.kind);
+  const wanted = e => only === "all" || (only === "feedback" ? e.kind === "feedback" : problem(e));
   let armed = null;     // the serial whose take-back is waiting to be confirmed
   let disarm = 0;
   const now = () => Math.floor(Date.now() / 1000) + skew;
@@ -167,7 +170,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
   }
 
   function entry(e) {
-    const kind = e.kind.startsWith("refused") ? "no" : e.kind === "forced" ? "warn" : e.kind === "feedback" ? "note" : "";
+    const kind = e.kind.startsWith("refused") || e.kind === "error" ? "no" : e.kind === "forced" || e.kind === "wait gave up" ? "warn" : e.kind === "feedback" ? "note" : "";
     const row = el("div", "ev" + (e.kind === "feedback" ? " feedback" : "")); row.setAttribute("role", "listitem");
     const time = el("time"); time.dataset.t = e.t;
     const text = el("div", "text");
@@ -179,7 +182,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
 
   function render(focusKey) {
     if (!state) return;
-    const log = state.log.filter(e => only === "all" || e.kind === "feedback");
+    const log = state.log.filter(wanted).slice(0, 80);
     const next = JSON.stringify([state.devices, log, only, armed]);
     if (next === drawn && !focusKey) return tick();
     drawn = next;
@@ -197,9 +200,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
       : "Plug in a device or start an emulator. It appears here as soon as adb sees it.";
 
     $("devices").replaceChildren(...(state.devices.length ? state.devices.map(device) : [el("div", "empty", "Nothing to show yet.")]));
-    const none = only === "all"
-      ? "Nothing yet. Refusals, forced rentals and agent feedback appear here."
-      : "No feedback yet. Agents leave it with `adbrent feedback`.";
+    const none = only === "feedback" ? "No feedback yet. Agents leave it with `adbrent feedback`."
+      : only === "all" ? "Nothing has happened yet."
+      : "No problems. Refusals, forced rentals, errors and agent feedback appear here.";
     $("log").replaceChildren(...(log.length ? log.map(entry) : [el("div", "empty", none)]));
     tick();
     if (focused) {
@@ -233,9 +236,9 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
     }
   }
 
-  const pick = which => { only = which; $("all").setAttribute("aria-pressed", which === "all"); $("notes").setAttribute("aria-pressed", which === "feedback"); render(); };
-  $("all").dataset.key = "pick:all"; $("notes").dataset.key = "pick:feedback";
-  $("all").onclick = () => pick("all"); $("notes").onclick = () => pick("feedback");
+  const picks = { problems: "problems", notes: "feedback", all: "all" };
+  const pick = which => { only = which; Object.entries(picks).forEach(([id, name]) => $(id).setAttribute("aria-pressed", name === which)); render(); };
+  Object.entries(picks).forEach(([id, name]) => { $(id).dataset.key = `pick:${name}`; $(id).onclick = () => pick(name); });
   refresh();
   setInterval(refresh, 3000);
   setInterval(tick, 1000);

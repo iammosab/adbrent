@@ -30,7 +30,7 @@ fn state(probes: &Probes) -> String {
         streams
     };
     let events = store::events();
-    let recent: Vec<_> = events.iter().rev().take(40).collect();
+    let recent: Vec<_> = events.iter().rev().take(300).collect();
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "now": store::now(),
@@ -108,7 +108,7 @@ fn handle(mut stream: TcpStream, probes: &Probes) {
         ("POST", path) if path.starts_with("/api/release/") && header("x-adbrent").is_some() => {
             let serial = decode(&path["/api/release/".len()..]);
             let released =
-                store::release(|l| l.serial == serial).is_ok_and(|done| !done.is_empty());
+                store::release(|l| l.serial == serial, None).is_ok_and(|done| !done.is_empty());
             if released {
                 let you = store::Me {
                     owner: String::new(),

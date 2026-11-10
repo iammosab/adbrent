@@ -44,6 +44,14 @@ fn session_start(id: &str, v: &Value) {
     };
     store::sweep_sessions();
     let _ = store::write_session(id, &session);
+    if store::debug() {
+        store::log_event(
+            "session started",
+            &store::me_for_session(id),
+            "",
+            v["source"].as_str().unwrap_or_default(),
+        );
+    }
     // After /clear the same process carries on under a new session id: keep its devices.
     let _ = store::adopt(&store::me_for_session(id));
     let _ = install::ensure_shim();
@@ -102,6 +110,14 @@ fn pre_tool_use(id: &str, v: &Value) {
     let devs = adb::devices(&real, &[]);
     let me = store::me_for_session(id);
     for d in devs.iter().filter(|d| named.contains(&d.serial)) {
+        if store::debug() {
+            store::log_event(
+                "tool call",
+                &me,
+                &d.serial,
+                v["tool_name"].as_str().unwrap_or_default(),
+            );
+        }
         if let Claim::Refused(reason) = desk::claim(&real, &d.serial, &me, &devs, false) {
             println!(
                 "{}",
@@ -120,8 +136,16 @@ fn session_end(id: &str, v: &Value) {
     // On /clear the process lives on; the next session-start adopts its devices.
     if v["reason"].as_str() != Some("clear") {
         let owner = format!("s:{id}");
-        let _ = store::release(|l| l.owner == owner);
+        let _ = store::release(|l| l.owner == owner, Some("its session ended"));
         let _ = store::leave(&owner);
+    }
+    if store::debug() {
+        store::log_event(
+            "session ended",
+            &store::me_for_session(id),
+            "",
+            v["reason"].as_str().unwrap_or_default(),
+        );
     }
     store::remove_session(id);
 }

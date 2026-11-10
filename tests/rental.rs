@@ -832,3 +832,62 @@ fn watch_reports_rentals_and_releases_and_a_wait_gets_the_freed_device() {
     assert_eq!(out(&got), "AAA\n", "{}", err(&got));
     assert!(err(&d.adb("e", &["shell", "id"])).contains("as a background command"));
 }
+
+#[test]
+fn the_log_and_report_show_how_agents_got_on() {
+    let d = Desk::new("observe");
+    let cli = |session: &str, args: &[&str]| d.rent(session, args);
+    assert!(out(&cli("u", &["debug", "on"])).contains("The trace is on"));
+
+    d.adb("a", &["shell", "id"]); // rents AAA
+    d.adb("b", &["-s", "AAA", "shell", "id"]); // refused
+    d.adb("b", &["-s", "AAA", "shell", "id"]); // goes straight back to it
+    assert_eq!(out(&cli("b", &["rent", "--force", "BBB"])), "BBB\n");
+    cli("b", &["feedback", "the refusal did not say why"]);
+    assert_eq!(cli("c", &["rent", "--wait=1"]).status.code(), Some(1));
+    cli("a", &["release"]);
+
+    let log = out(&cli("u", &["log", "-n", "100"]));
+    for expected in [
+        "rented AAA",
+        "refused: rented AAA",
+        "released AAA",
+        "handed back by its renter",
+        "waiting",
+        "wait gave up",
+        "adb shell id  [passed to adb",
+        "adb -s AAA shell id  [stopped",
+        "adbrent rent --force BBB",
+    ] {
+        assert!(log.contains(expected), "the log lacks `{expected}`:\n{log}");
+    }
+
+    let report = out(&cli("u", &["report"]));
+    assert!(
+        report.contains("3 sessions")
+            && report.contains("2 rentals")
+            && report.contains("3 refusals"),
+        "{report}"
+    );
+    assert!(
+        report.contains("1 time an agent went back to a device it had just been refused"),
+        "{report}"
+    );
+    assert!(report.contains("1 forced rental used"), "{report}");
+    assert!(report.contains("1 wait gave up"), "{report}");
+    assert!(report.contains("the refusal did not say why"), "{report}");
+    assert!(
+        report.contains("From the trace: 3 adb commands run, 2 stopped by adbrent"),
+        "{report}"
+    );
+
+    // With the trace off, commands are no longer logged, but what happened still is.
+    cli("u", &["debug", "off"]);
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    let after = out(&cli("u", &["log", "-n", "100"]));
+    assert_eq!(
+        after.matches("  adb  ").count() + after.matches(" adb AAA").count(),
+        log.matches("  adb  ").count() + log.matches(" adb AAA").count()
+    );
+    assert!(after.matches("rented AAA").count() > log.matches("rented AAA").count());
+}

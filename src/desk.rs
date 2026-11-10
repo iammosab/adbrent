@@ -160,7 +160,21 @@ pub fn claim(real: &Path, serial: &str, me: &Me, devs: &[Device], force: bool) -
         }
     }
     match store::acquire(serial, me) {
-        Ok(Ok(new)) => Claim::Rented { new },
+        Ok(Ok(new)) => {
+            if new {
+                store::log_event(
+                    "rented",
+                    me,
+                    serial,
+                    if force {
+                        "forced"
+                    } else {
+                        "named by the agent"
+                    },
+                );
+            }
+            Claim::Rented { new }
+        }
         Ok(Err(holder)) => refuse_held(&holder),
         Err(e) => Claim::Unrecorded(e),
     }
@@ -177,7 +191,15 @@ pub fn pick<'a>(real: &Path, me: &Me, pool: &[&'a Device]) -> Result<&'a Device,
     let mut later = Vec::new(); // (how reluctantly, device)
     let mut busy = Vec::new();
     let take = |d: &'a Device| match store::acquire(&d.serial, me) {
-        Ok(Ok(_)) => Ok(Some(d)),
+        Ok(Ok(_)) => {
+            store::log_event(
+                "rented",
+                me,
+                &d.serial,
+                "picked for a command that named no device",
+            );
+            Ok(Some(d))
+        }
         Ok(Err(_)) => Ok(None), // someone else got there first
         Err(e) => Err(unrecorded(&e)),
     };
