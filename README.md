@@ -16,6 +16,8 @@ runs rents a free device, later commands go to that same device, and any other s
 that targets it is refused with a message naming the devices that are free. Agents never
 hit `adb: more than one device/emulator`, and never need to be told which serial to use.
 
+![Two agent sessions each get their own Android device; one is refused when it reaches for the other's](assets/demo.gif)
+
 ```console
 $ adb shell getprop ro.product.model
 adbrent: rented 3A021FDJH000XY (Pixel 8) to this session. Run `adbrent release` when you no longer need it.
