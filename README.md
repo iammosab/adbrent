@@ -6,11 +6,12 @@
 ![Platforms: macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#in-claude-code)
 
-**[iammosab.github.io/adbrent](https://iammosab.github.io/adbrent/)**: a short tour with a desk you can try.
+**[iammosab.github.io/adbrent](https://iammosab.github.io/adbrent/)**: a short tour, with a simulation you can try.
 
 **Stop parallel AI coding agents from fighting over the same Android phone or emulator.**
-adbrent is a device lock for `adb`: each Claude Code, Codex, Gemini CLI or other agent
-session automatically gets its own Android device, and keeps it until the session ends.
+adbrent is a device lock for `adb`: each coding-agent session automatically gets its own
+Android device, and keeps it until the session ends. It is built for and tested with
+Claude Code; other agents use it through their PATH.
 
 When several agent sessions run on one machine, they all see the same `adb devices` list
 and end up driving the same phone: one installs an APK while another is halfway through a
@@ -23,12 +24,13 @@ hit `adb: more than one device/emulator`, and never need to be told which serial
 
 ```console
 $ adb shell getprop ro.product.model
-adbrent: rented 3A021FDJH000XY (Pixel 8) to this session. Run `adbrent release` when you no longer need it.
+adbrent: rented 3A021FDJH000XY (Pixel 8) to this session; plain `adb` now goes to it. `adbrent release` when done, `adbrent help` for more.
 Pixel 8
 
 $ adb -s R5CT20ABCDE install app.apk
 adbrent: R5CT20ABCDE (SM S911B) is already rented by another agent (claude session 3c45fc60 in shop-app, for 4m). Do not use it.
-adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb` or `adb -s <serial>` to rent one.
+adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb`, or `adb -s <serial>`.
+adbrent: working for that agent? Get a code from its `adbrent share` and run `adbrent join <code>`.
 ```
 
 - **Nothing for agents to learn.** They keep typing `adb`.
@@ -44,7 +46,8 @@ adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb` or `adb -
 
 ## Install
 
-You need macOS or Linux, and `adb` on your PATH (Android SDK platform-tools).
+You need macOS or Linux, and `adb` on your PATH (Android SDK platform-tools). adbrent
+lives in `~/.adbrent` and does not modify your Android SDK.
 
 ### In Claude Code
 
@@ -356,6 +359,11 @@ the next time anyone asks for it.
   `ANDROID_SERIAL=$(adbrent rent)`.
 - An MCP tool that picks a device itself, without naming one in its arguments, is not
   checked.
+- Only Claude Code has been tested end to end. Other agents work through PATH and are
+  recognised by name, but have not been tested the same way.
+- macOS and Linux only. Windows is not supported.
+- Waiting agents are not queued in order: whichever asks first after a release gets the
+  device.
 - Inside Claude Code's Bash sandbox, adbrent can read rentals but cannot record new ones
   unless `~/.adbrent` is writable (`sandbox.filesystem.allowWrite`). A command whose
   rental cannot be recorded is stopped, with that fix in the message, because running it
