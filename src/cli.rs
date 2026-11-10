@@ -33,7 +33,8 @@ USAGE
   adbrent log [-n N] [-f] [--json] What happened: rentals, refusals, waits, feedback;
                                    -f keeps printing as things happen
   adbrent report [--hours N]       How agents got on with adbrent, and what to look at
-  adbrent debug [on|off]           Also log every adb and adbrent command agents run
+  adbrent debug [on|off]           For studying agents: also log routine activity
+                                   and every command they run (off by default)
   adbrent feedback [TEXT]          Record a problem or a suggestion (no TEXT: list them)
   adbrent feedback --issue         Print a GitHub issue link filled in from the latest one
   adbrent env                      Shell line that puts the adb stand-in on PATH
@@ -396,13 +397,11 @@ fn debug(args: &[String]) -> i32 {
         return 1;
     }
     if store::debug() {
-        println!(
-            "The trace is on: every adb command and adbrent command is logged, with who ran it."
-        );
+        println!("The trace is on: rentals, releases, waits and every adb and adbrent command are logged, with who ran them.");
         println!("Command lines can contain what agents type into apps, so turn it off when you are done: `adbrent debug off`.");
         println!("Watch it live with `adbrent log -f`; sum it up with `adbrent report`.");
     } else {
-        println!("The trace is off. Rentals, refusals, waits and feedback are still logged.");
+        println!("The trace is off. Only problems are logged: refusals, forced rentals, errors and agent feedback.");
     }
     0
 }
@@ -457,13 +456,22 @@ fn report(args: &[String]) -> i32 {
         .collect();
     sessions.sort();
     sessions.dedup();
-    println!(
-        "The last {}: {}, {}, {}.",
-        count(hours as usize, "hour"),
-        count(sessions.len(), "session"),
-        count(rented.len(), "rental"),
-        count(refused.len(), "refusal")
-    );
+    if rented.is_empty() {
+        println!(
+            "The last {}: {} ran into something, {}.",
+            count(hours as usize, "hour"),
+            count(sessions.len(), "session"),
+            count(refused.len(), "refusal")
+        );
+    } else {
+        println!(
+            "The last {}: {}, {}, {}.",
+            count(hours as usize, "hour"),
+            count(sessions.len(), "session"),
+            count(rented.len(), "rental"),
+            count(refused.len(), "refusal")
+        );
+    }
 
     let held = middle(
         of("released")
@@ -627,7 +635,7 @@ fn report(args: &[String]) -> i32 {
             );
         }
     } else if !store::debug() {
-        println!("\nFor every adb command agents run, turn the trace on: `adbrent debug on`.");
+        println!("\nThis covers problems only. For rentals, hold times, waits and every command agents run, turn the trace on while you study it: `adbrent debug on`.");
     }
     0
 }

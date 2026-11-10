@@ -167,10 +167,11 @@ adbrent exclude [SERIAL]           Put a device off limits to agents (no SERIAL:
 adbrent serve [--port N]           Live status page on http://127.0.0.1:7878
 adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
                                    outside use (no TEXT: list; --remove TEXT: undo)
-adbrent log [-n N] [-f] [--json]   What happened: rentals, refusals, waits, feedback;
-                                   -f keeps printing as things happen
+adbrent log [-n N] [-f] [--json]   What was logged: refusals, forced rentals, errors,
+                                   feedback; -f keeps printing as things happen
 adbrent report [--hours N]         How agents got on with adbrent, and what to look at
-adbrent debug [on|off]             Also log every adb and adbrent command agents run
+adbrent debug [on|off]             For studying agents: also log routine activity and
+                                   every command they run (off by default)
 adbrent feedback [TEXT]            Record a problem or a suggestion (no TEXT: list them)
 adbrent feedback --issue           Print a GitHub issue link filled in from the latest one
 adbrent env                        Shell line that puts the adb stand-in on PATH
@@ -250,12 +251,31 @@ for a device you want left alone for a while.
 
 ## Seeing how agents get on with it
 
-adbrent keeps a log on your machine, in `~/.adbrent/log.jsonl`, of what happens at the
-desk: rentals and releases (with how long each device was held), refusals and why, waits,
-forced rentals, shared devices, errors, and anything an agent reports.
+**What every install records.** adbrent keeps a small log on your machine, in
+`~/.adbrent/log.jsonl`, of problems only: refusals and why, forced rentals, errors, and
+anything an agent reports. `adbrent log` shows it, and it feeds the status page.
 
-- **`adbrent log`** shows the recent entries, and `adbrent log -f` keeps printing as things
-  happen, so you can watch agents work.
+- **Agents can report a problem themselves** with `adbrent feedback "<what happened>"`.
+  They are told about this in the one refusal that can be mistaken (a device that looks
+  in use outside adbrent), and in `adbrent help`. `adbrent feedback` lists what they
+  wrote.
+- **`adbrent feedback --issue`** prints a link to a GitHub issue filled in with the latest
+  report and the few log entries before it, for you to read and submit.
+
+**For development and debugging.** When you want to study how agents behave, turn the
+trace on:
+
+```sh
+adbrent debug on     # adbrent debug off when you are done
+```
+
+While it is on, the log also records routine activity (rentals and releases with how long
+each device was held, waits, shared devices) and every `adb` and `adbrent` command agents
+run: who ran it, which device it went to, whether it was passed on or stopped, and how
+long adbrent took. It adds about 0.15 ms per command. It is off by default, and command
+lines can contain what agents type into apps, so turn it off afterwards.
+
+- **`adbrent log -f`** prints entries as they happen, so you can watch agents work.
 - **`adbrent report`** sums up the last 24 hours (`--hours N` for another span) and points
   out what usually needs fixing:
 
@@ -275,20 +295,10 @@ forced rentals, shared devices, errors, and anything an agent reports.
       9f12ab07 in chat-app)
   ```
 
-- **`adbrent debug on`** turns on a trace for when you want the detail: every `adb`
-  command and every `adbrent` command agents run is logged too, with who ran it, which
-  device it went to, whether it was passed on or stopped, and how long adbrent took. It
-  adds about 0.15 ms per command. Command lines can contain what agents type into apps,
-  so turn it off when you are done: `adbrent debug off`.
-- **Agents can report a problem themselves** with `adbrent feedback "<what happened>"`.
-  They are told about this in the one refusal that can be mistaken (a device that looks
-  in use outside adbrent), and in `adbrent help`. `adbrent feedback` lists what they
-  wrote.
-- **`adbrent feedback --issue`** prints a link to a GitHub issue filled in with the latest
-  report and the few log entries before it, for you to read and submit.
+  With the trace off, the report still works, but covers problems only.
 
 None of this is shown to agents, so it costs them nothing, and nothing leaves your machine
-unless you open that link and submit it.
+unless you open the issue link and submit it.
 
 ## How it works
 

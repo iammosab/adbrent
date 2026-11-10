@@ -238,7 +238,7 @@ footer a { color: var(--ink); }
       <div><dt>Waiting doesn't mean polling</dt><dd>With every device taken, an agent runs <code>adbrent rent --wait</code> in the background and is told the moment it has one.</dd></div>
       <div><dt>Helpers can be let in</dt><dd>A session that delegates work shares its device with a code: <code>adbrent share</code>, then <code>adbrent join</code> in the helper.</dd></div>
       <div><dt>It stays out of the way</dt><dd>About 30 tokens once per rental, none at session start, and roughly 1.5&nbsp;ms added to an adb command.</dd></div>
-      <div><dt>You can see how agents get on with it</dt><dd><code>adbrent report</code> sums up rentals, refusals and waits, and points out patterns worth fixing. Agents can file a note themselves with <code>adbrent feedback</code>.</dd></div>
+      <div><dt>Agents can tell you what went wrong</dt><dd>Refusals and forced rentals are logged on your machine, and agents can file a note with <code>adbrent feedback</code>. A debug mode, off by default, records everything they do for when you want to study it.</dd></div>
     </dl>
   </div>
 </section>

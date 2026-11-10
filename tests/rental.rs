@@ -881,13 +881,14 @@ fn the_log_and_report_show_how_agents_got_on() {
         "{report}"
     );
 
-    // With the trace off, commands are no longer logged, but what happened still is.
+    // With the trace off, a normal install logs problems and nothing else.
     cli("u", &["debug", "off"]);
-    d.adb("a", &["-s", "AAA", "shell", "id"]);
-    let after = out(&cli("u", &["log", "-n", "100"]));
-    assert_eq!(
-        after.matches("  adb  ").count() + after.matches(" adb AAA").count(),
-        log.matches("  adb  ").count() + log.matches(" adb AAA").count()
-    );
-    assert!(after.matches("rented AAA").count() > log.matches("rented AAA").count());
+    let quiet = Desk::new("observe-off");
+    quiet.adb("a", &["shell", "id"]);
+    quiet.adb("b", &["-s", "AAA", "shell", "id"]);
+    quiet.rent("a", &["release"]);
+    let plain = out(&quiet.rent("u", &["log", "-n", "100"]));
+    assert_eq!(plain.lines().count(), 1, "{plain}");
+    assert!(plain.contains("refused: rented AAA"), "{plain}");
+    assert!(out(&quiet.rent("u", &["report"])).contains("turn the trace on"));
 }

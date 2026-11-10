@@ -417,8 +417,9 @@ pub fn me_for_session(id: &str) -> Me {
     }
 }
 
-/// Is the trace on? With it, every adb command and adbrent command is logged
-/// too, for studying how agents behave. Turned on with `adbrent debug on`.
+/// Is the trace on? With it, routine activity (rentals, releases, waits) and
+/// every adb and adbrent command are logged too, for studying how agents
+/// behave. Off unless someone turns it on with `adbrent debug on`.
 pub fn debug() -> bool {
     env::var_os("ADBRENT_DEBUG").is_some_and(|v| !v.is_empty()) || home().join("debug").exists()
 }
@@ -434,6 +435,21 @@ pub fn log_timed(kind: &str, me: &Me, serial: &str, detail: &str, secs: u64) {
     log_as(kind, &me.label, &me.owner, serial, detail, Some(secs));
 }
 
+/// What is logged only with the trace on (`adbrent debug on`).
+const ROUTINE: [&str; 11] = [
+    "rented",
+    "released",
+    "waiting",
+    "wait ended",
+    "shared",
+    "joined",
+    "adb",
+    "adbrent",
+    "tool call",
+    "session started",
+    "session ended",
+];
+
 /// Set while a command is waiting for a device: each retry would otherwise be
 /// logged as one more refusal.
 pub static WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -441,6 +457,11 @@ pub static WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 pub fn log_as(kind: &str, who: &str, owner: &str, serial: &str, detail: &str, secs: Option<u64>) {
     use std::io::Write;
     if kind.starts_with("refused") && WAITING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    // A normal install records only problems. How agents use the desk day to
+    // day is recorded while someone is studying it, with the trace on.
+    if ROUTINE.contains(&kind) && !debug() {
         return;
     }
     let path = home().join("log.jsonl");
