@@ -1,12 +1,20 @@
-# adbrent
+# adbrent: one Android device per AI agent
 
-A rental desk for Android devices shared between AI agents.
+[![Release](https://img.shields.io/github/v/release/iammosab/adbrent)](https://github.com/iammosab/adbrent/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platforms: macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#in-claude-code)
+
+**Stop parallel AI coding agents from fighting over the same Android phone or emulator.**
+adbrent is a device lock for `adb`: each Claude Code, Codex, Gemini CLI or other agent
+session automatically gets its own Android device, and keeps it until the session ends.
 
 When several agent sessions run on one machine, they all see the same `adb devices` list
-and end up driving the same phone. adbrent gives each session its own device: the first
-`adb` command a session runs rents a free device, later commands go to that same device,
-and any other session that targets it is refused with a message naming the devices that
-are free. The rental ends when the session does.
+and end up driving the same phone: one installs an APK while another is halfway through a
+UI test. adbrent gives each session its own device. The first `adb` command a session
+runs rents a free device, later commands go to that same device, and any other session
+that targets it is refused with a message naming the devices that are free. Agents never
+hit `adb: more than one device/emulator`, and never need to be told which serial to use.
 
 ```console
 $ adb shell getprop ro.product.model
@@ -189,6 +197,48 @@ adbrent runs one short command on it and looks at two things:
 
 It sees what is happening at that moment. A program that uses a device in short bursts,
 with nothing running in between, looks idle between bursts.
+
+## FAQ
+
+### How do I run multiple Claude Code sessions against different Android devices?
+
+Install adbrent and start the sessions. Each one rents a different connected device or
+emulator on its first `adb` command, with no `-s <serial>` and no per-session setup. If
+there are more sessions than devices, the extra ones are told so and can queue with
+`adbrent rent --wait`.
+
+### Does it work with Android emulators?
+
+Yes. Anything `adb devices` lists can be rented: USB devices, wireless devices, emulators,
+Android TV. `adb -e` asks for an emulator and `adb -d` for a USB device.
+
+### Does it work with agents other than Claude Code?
+
+It works with anything that runs the `adb` command, once the stand-in is on that agent's
+PATH (see [Other agents and harnesses](#other-agents-and-harnesses)). Claude Code is the
+one it has been tested with, and the only one with a plugin that sets this up for you.
+
+### Does it work with MCP servers that control devices?
+
+For Claude Code, yes: a hook checks the device named in each MCP tool call, so
+device-control servers stay inside the rental. A tool that chooses a device without naming
+it cannot be checked.
+
+### What about scrcpy, Gradle and Android Studio?
+
+They are not blocked, but they are noticed. A device with scrcpy, a test run or a `logcat`
+going is treated as in use, and agents are kept off it. Opening scrcpy on a phone is a
+quick way to reserve it for yourself.
+
+### Is this a device farm?
+
+No. It is a lock, not a lab: it shares the devices plugged into one machine between the
+agents running on that machine. It has no server, no queue service and no remote access.
+
+### What happens when an agent crashes while holding a device?
+
+The rental is tied to the agent's process. When the process is gone, the device is free
+the next time anyone asks for it.
 
 ## Limits
 
