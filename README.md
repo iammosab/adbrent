@@ -6,6 +6,8 @@
 ![Platforms: macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#in-claude-code)
 
+**[iammosab.github.io/adbrent](https://iammosab.github.io/adbrent/)**: a short tour with a desk you can try.
+
 **Stop parallel AI coding agents from fighting over the same Android phone or emulator.**
 adbrent is a device lock for `adb`: each Claude Code, Codex, Gemini CLI or other agent
 session automatically gets its own Android device, and keeps it until the session ends.
