@@ -146,8 +146,7 @@ pub fn held_by_other(serial: &str, me: &Me) -> Option<Lease> {
 
 /// True when `me` already holds `serial` and nothing needs writing.
 pub fn held_by_me(serial: &str, me: &Me) -> bool {
-    read_lease(serial)
-        .is_some_and(|l| l.owner == me.owner && l.pid == me.pid && l.start == me.start)
+    read_lease(serial).is_some_and(|l| l.owner == me.owner && l.alive())
 }
 
 /// Rent `serial` for `me`. `Ok(Ok(true))` is a new rental, `Ok(Ok(false))` one
@@ -158,7 +157,9 @@ pub fn acquire(serial: &str, me: &Me) -> io::Result<Result<bool, Lease>> {
     let mut new = true;
     if let Some(l) = read_lease(serial) {
         if l.owner == me.owner {
-            if l.pid == me.pid && l.start == me.start {
+            // Still held under a live process: leave it alone, whichever of the
+            // session's processes is asking (a background job is not the session).
+            if l.alive() {
                 return Ok(Ok(false));
             }
             // Same session under a new process (a resumed session): keep the rental.
@@ -268,7 +269,11 @@ pub fn remove_session(id: &str) {
 }
 
 pub fn me() -> Me {
-    match env::var("ADBRENT_SESSION").ok().filter(|s| !s.is_empty()) {
+    // A session id travels in the environment, so it also reaches background
+    // jobs that have been cut loose from the agent's process tree. Ours is set
+    // by the plugin; Claude Code sets its own in every command it runs.
+    let named = |var: &str| env::var(var).ok().filter(|s| !s.is_empty());
+    match named("ADBRENT_SESSION").or_else(|| named("CLAUDE_CODE_SESSION_ID")) {
         Some(id) => me_for_session(&id),
         None => {
             let a = anchor();
@@ -303,6 +308,18 @@ pub fn me_for_session(id: &str) -> Me {
             label: format!("{} session {short}{place}", s.name),
         };
     }
+    // Claude Code names its own process to the commands it runs.
+    let claude = env::var("CLAUDE_PID")
+        .ok()
+        .and_then(|p| proc::info(p.parse().ok()?));
+    if let Some(p) = claude {
+        return Me {
+            owner,
+            pid: p.pid,
+            start: p.start,
+            label: format!("claude session {short}"),
+        };
+    }
     let a = anchor();
     Me {
         owner,
@@ -310,6 +327,36 @@ pub fn me_for_session(id: &str) -> Me {
         start: a.start,
         label: format!("{} session {short}", a.name),
     }
+}
+
+/// Note something worth the user's attention: a refusal, a forced rental, an
+/// agent's feedback. Kept on this machine only; never allowed to fail a command.
+pub fn log_event(kind: &str, me: &Me, serial: &str, detail: &str) {
+    use std::io::Write;
+    let path = home().join("log.jsonl");
+    let line = serde_json::json!({
+        "t": now(), "kind": kind, "who": me.label, "serial": serial,
+        "detail": detail, "version": env!("CARGO_PKG_VERSION"),
+    });
+    // Keep the log small: past 1 MB, drop the older half.
+    if fs::metadata(&path).is_ok_and(|m| m.len() > 1_000_000) {
+        if let Ok(text) = fs::read_to_string(&path) {
+            let lines: Vec<&str> = text.lines().collect();
+            let _ = fs::write(&path, lines[lines.len() / 2..].join("\n") + "\n");
+        }
+    }
+    let _ = fs::create_dir_all(home());
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+pub fn events() -> Vec<serde_json::Value> {
+    fs::read_to_string(home().join("log.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
 }
 
 pub fn anchor() -> proc::Proc {

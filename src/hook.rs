@@ -61,7 +61,8 @@ fn session_start(id: &str, v: &Value) {
         (no -s) keeps going to it. A device rented by another agent is refused with a message naming the free \
         ones; never work around a refusal. `adbrent status` lists devices, models and renters (name one with \
         `adb -s <serial>` when the task needs a particular device), `adbrent rent --wait` \
-        queues when all are taken, and `adbrent release` hands yours back once you no longer need it.";
+        queues when all are taken, and `adbrent release` hands yours back once you no longer need it. \
+        If adbrent gets in your way or a refusal looks wrong, record it with `adbrent feedback \"<what happened>\"`; the user reads those.";
     println!(
         "{}",
         json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})

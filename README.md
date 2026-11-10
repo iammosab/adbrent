@@ -102,8 +102,10 @@ eval "$(~/.adbrent/bin/adbrent env)"
 
 The renter is the agent process the command runs under. Codex, opencode, Gemini CLI and
 several others are recognised by name; anything else falls back to the nearest parent
-process that is not a shell. A harness that runs several sessions inside one process can
-name each one by setting `ADBRENT_SESSION=<id>` in that session's environment.
+process that is not a shell. Set `ADBRENT_SESSION=<id>` in a session's environment when the harness runs several
+sessions inside one process, or when its agents start adb in detached background jobs:
+a job cut loose from the agent's process can only be matched to its session by that id.
+(Claude Code sessions carry such an id already.)
 
 ### Update
 
@@ -149,6 +151,9 @@ adbrent release --force SERIAL     Take a device back from whoever holds it
 adbrent release --force --all      Clear every rental
 adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
                                    outside use (no TEXT: list; --remove TEXT: undo)
+adbrent log [-n N] [--json]        Recent refusals, forced rentals and feedback
+adbrent feedback [TEXT]            Record a problem or a suggestion (no TEXT: list them)
+adbrent feedback --issue           Print a GitHub issue link filled in from the latest one
 adbrent env                        Shell line that puts the adb stand-in on PATH
 adbrent install [--shim-only]      Set up ~/.adbrent and the Claude Code plugin
 adbrent uninstall                  Remove both
@@ -163,6 +168,21 @@ SERIAL          MODEL                STATE   RENTED BY
 R5CT20ABCDE     SM S911B             device  nobody, but in use outside adbrent (logcat)
 emulator-5554   sdk gphone64 arm64   device  -
 ```
+
+## Feedback from agents
+
+adbrent keeps a small log on your machine, in `~/.adbrent/log.jsonl`, of the moments worth
+your attention: every refusal, every forced rental, and anything an agent reports.
+
+- `adbrent log` shows the recent entries, so you can see where agents ran into it without
+  anyone telling you.
+- Agents can report a problem or a suggestion with `adbrent feedback "<what happened>"`.
+  They are told about this when a session starts, and again in the one refusal that can
+  be mistaken (a device that looks in use outside adbrent). `adbrent feedback` lists what
+  they wrote.
+- `adbrent feedback --issue` prints a link to a GitHub issue filled in with the latest
+  report and the few log entries before it, for you to read and submit. Nothing leaves
+  your machine unless you open that link and submit it.
 
 ## How it works
 

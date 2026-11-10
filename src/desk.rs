@@ -50,7 +50,7 @@ fn in_use(serial: &str, streams: &[String], devs: &[Device]) -> String {
         .cloned()
         .collect();
     format!(
-        "adbrent: {} is not rented, but something outside adbrent is using it right now (running on the device: {}). Do not use it.\n{}\nadbrent: if that is a helper that is fine to leave running, `adbrent ignore <part of its name>` stops counting it. `adbrent rent --force {serial}` takes the device anyway.",
+        "adbrent: {} is not rented, but something outside adbrent is using it right now (running on the device: {}). Do not use it.\n{}\nadbrent: if that is a helper that is fine to leave running, `adbrent ignore <part of its name>` stops counting it. `adbrent rent --force {serial}` takes the device anyway.\nadbrent: if this refusal was wrong, tell the user and record it: `adbrent feedback \"<what happened>\"`.",
         name(serial, devs),
         streams.join("; "),
         alternatives(&others)
@@ -106,18 +106,40 @@ pub enum Claim {
 pub fn claim(real: &Path, serial: &str, me: &Me, devs: &[Device], force: bool) -> Claim {
     match store::read_lease(serial) {
         Some(l) if l.owner == me.owner => {}
-        Some(l) if l.alive() => return Claim::Refused(refusal(serial, &l, devs)),
-        _ if force => {}
+        Some(l) if l.alive() => {
+            store::log_event(
+                "refused: rented",
+                me,
+                serial,
+                &format!("held by {}", l.label),
+            );
+            return Claim::Refused(refusal(serial, &l, devs));
+        }
+        _ if force => store::log_event(
+            "forced",
+            me,
+            serial,
+            "took the device without checking for outside use",
+        ),
         _ => {
             let streams = outside(real, serial).streams;
             if !streams.is_empty() {
+                store::log_event("refused: outside use", me, serial, &streams.join("; "));
                 return Claim::Refused(in_use(serial, &streams, devs));
             }
         }
     }
     match store::acquire(serial, me) {
         Ok(Ok(new)) => Claim::Rented { new },
-        Ok(Err(holder)) => Claim::Refused(refusal(serial, &holder, devs)),
+        Ok(Err(holder)) => {
+            store::log_event(
+                "refused: rented",
+                me,
+                serial,
+                &format!("held by {}", holder.label),
+            );
+            Claim::Refused(refusal(serial, &holder, devs))
+        }
         Err(e) => Claim::Unrecorded(e),
     }
 }
@@ -157,6 +179,7 @@ pub fn pick<'a>(
             return Ok(d);
         }
     }
+    store::log_event("refused: none free", me, "", &busy.join(", "));
     if busy.is_empty() {
         return Err(format!(
             "adbrent: every connected device is already rented by another agent.\n{}",

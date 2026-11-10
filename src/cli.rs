@@ -21,6 +21,9 @@ USAGE
   adbrent release --force --all    Clear every rental
   adbrent ignore [TEXT]            Stop counting on-device commands containing TEXT
                                    as outside use (no TEXT: list; --remove TEXT)
+  adbrent log [-n N] [--json]      Recent refusals, forced rentals and feedback
+  adbrent feedback [TEXT]          Record a problem or a suggestion (no TEXT: list them)
+  adbrent feedback --issue         Print a GitHub issue link filled in from the latest one
   adbrent env                      Shell line that puts the adb stand-in on PATH
   adbrent install [--shim-only]    Set up ~/.adbrent and the Claude Code plugin
   adbrent uninstall                Remove both
@@ -36,6 +39,8 @@ pub fn run(args: Vec<String>) -> i32 {
         Some("rent") => rent(rest),
         Some("release") => release(rest),
         Some("ignore") => ignore(rest),
+        Some("log") => log(rest),
+        Some("feedback") => feedback(rest),
         Some("env") => {
             println!("{}", install::env_lines(None));
             0
@@ -155,6 +160,122 @@ fn status(args: &[String]) -> i32 {
         };
         println!("{serial:w0$}  {model:w1$}  {state:w2$}  {renter}");
     }
+    0
+}
+
+fn ago(event: &serde_json::Value) -> String {
+    let s = store::now().saturating_sub(event["t"].as_u64().unwrap_or(0));
+    match s {
+        0..=59 => format!("{s}s ago"),
+        60..=3599 => format!("{}m ago", s / 60),
+        3600..=86_399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86_400),
+    }
+}
+
+fn describe(event: &serde_json::Value) -> String {
+    let text = |key: &str| event[key].as_str().unwrap_or_default();
+    let device = if text("serial").is_empty() {
+        String::new()
+    } else {
+        format!(" {}", text("serial"))
+    };
+    format!(
+        "{:>8}  {}{device}  [{}]  {}",
+        ago(event),
+        text("kind"),
+        text("who"),
+        text("detail")
+    )
+}
+
+fn log(args: &[String]) -> i32 {
+    let count = args
+        .iter()
+        .position(|a| a == "-n")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(30);
+    let events = store::events();
+    let recent = &events[events.len().saturating_sub(count)..];
+    if args.iter().any(|a| a == "--json") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(recent).unwrap_or_default()
+        );
+    } else if recent.is_empty() {
+        println!("Nothing logged yet.");
+    } else {
+        recent.iter().for_each(|e| println!("{}", describe(e)));
+    }
+    0
+}
+
+/// Percent-encode for a URL query value.
+fn encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn feedback(args: &[String]) -> i32 {
+    let events = store::events();
+    let notes: Vec<(usize, &serde_json::Value)> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e["kind"] == "feedback")
+        .collect();
+    if args.iter().any(|a| a == "--issue") {
+        let Some(&(at, note)) = notes.last() else {
+            eprintln!("adbrent: no feedback recorded yet");
+            return 1;
+        };
+        // The note, plus what adbrent did just before it. Printed for a person to
+        // read and submit; nothing is sent from here.
+        let before: Vec<String> = events[at.saturating_sub(5)..at]
+            .iter()
+            .map(describe)
+            .collect();
+        let body = format!(
+            "{}\n\nadbrent {} on {}\n\nWhat adbrent logged just before:\n```\n{}\n```\n",
+            note["detail"].as_str().unwrap_or_default(),
+            note["version"].as_str().unwrap_or_default(),
+            std::env::consts::OS,
+            before.join("\n")
+        );
+        let title: String = note["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .take(70)
+            .collect();
+        println!(
+            "https://github.com/iammosab/adbrent/issues/new?title={}&body={}",
+            encode(&title),
+            encode(&body)
+        );
+        return 0;
+    }
+    let text = args
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.trim().is_empty() {
+        if notes.is_empty() {
+            println!("No feedback recorded yet.");
+        }
+        notes.iter().for_each(|(_, e)| println!("{}", describe(e)));
+        return 0;
+    }
+    store::log_event("feedback", &store::me(), "", text.trim());
+    println!("Recorded. The user can read it with `adbrent feedback`.");
     0
 }
 

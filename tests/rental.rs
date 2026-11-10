@@ -449,3 +449,76 @@ fn leftovers_from_a_rental_and_ignored_helpers_are_not_outside_use() {
         Some(1)
     );
 }
+
+#[test]
+fn a_background_job_cut_loose_from_its_session_is_still_that_session() {
+    let d = Desk::new("orphan");
+    // No session id of ours: only what Claude Code puts in every command's environment.
+    let run = |session: &str, script: &str| {
+        Command::new("sh")
+            .args(["-c", script])
+            .env("ADBRENT_HOME", d.dir.join("home"))
+            .env("ADBRENT_REAL_ADB", d.dir.join("real-adb"))
+            .env_remove("ADBRENT_SESSION")
+            .env("CLAUDE_CODE_SESSION_ID", session)
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .output()
+            .unwrap()
+    };
+    let shim = d.dir.join("shim/adb");
+    let result = d.dir.join("job.txt");
+    assert_eq!(
+        out(&run("one", &format!("{} -s AAA shell id", shim.display()))),
+        "REAL -s AAA shell id\n"
+    );
+    // A detached job: its parent shell is gone by the time it runs adb.
+    run(
+        "one",
+        &format!(
+            "(sleep 1; {} -s AAA shell id > {} 2>&1) > /dev/null 2>&1 &",
+            shim.display(),
+            result.display()
+        ),
+    );
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "REAL -s AAA shell id\n"
+    );
+    // The rental is still the session's, not the short-lived job's.
+    let other = run("two", &format!("{} -s AAA shell id", shim.display()));
+    assert_eq!(other.status.code(), Some(1));
+    assert!(
+        err(&other).contains("claude session one"),
+        "{}",
+        err(&other)
+    );
+}
+
+#[test]
+fn refusals_and_feedback_are_logged_for_the_user() {
+    let d = Desk::new("log");
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    d.adb("b", &["-s", "AAA", "shell", "id"]);
+    let note = d.rent("b", &["feedback", "AAA was refused but", "I own it"]);
+    assert!(out(&note).contains("Recorded"));
+
+    let log = out(&d.rent("a", &["log"]));
+    assert!(
+        log.contains("refused: rented AAA") && log.contains("held by"),
+        "{log}"
+    );
+    assert!(
+        log.contains("feedback") && log.contains("AAA was refused but I own it"),
+        "{log}"
+    );
+    assert_eq!(out(&d.rent("a", &["feedback"])).lines().count(), 1);
+    let link = out(&d.rent("a", &["feedback", "--issue"]));
+    assert!(
+        link.starts_with(
+            "https://github.com/iammosab/adbrent/issues/new?title=AAA%20was%20refused"
+        ),
+        "{link}"
+    );
+    assert!(link.contains("refused%3A%20rented"), "{link}");
+}
