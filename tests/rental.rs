@@ -892,3 +892,28 @@ fn the_log_and_report_show_how_agents_got_on() {
     assert!(plain.contains("refused: rented AAA"), "{plain}");
     assert!(out(&quiet.rent("u", &["report"])).contains("turn the trace on"));
 }
+
+#[test]
+fn an_older_plugin_script_never_replaces_a_newer_binary() {
+    let d = Desk::new("downgrade");
+    let bin = d.dir.join("home/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    // A stand-in for a binary newer than this plugin script expects.
+    let newer = "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'adbrent 99.0.0'; else echo \"KEPT $*\"; fi\n";
+    std::fs::write(bin.join("adbrent"), newer).unwrap();
+    std::fs::set_permissions(bin.join("adbrent"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin/scripts/hook.sh");
+    let run = Command::new(script)
+        .arg("session-start")
+        .env("ADBRENT_HOME", d.dir.join("home"))
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out(&run), "KEPT hook session-start\n", "{}", err(&run));
+    assert_eq!(
+        std::fs::read_to_string(bin.join("adbrent")).unwrap(),
+        newer,
+        "the newer binary was replaced"
+    );
+}

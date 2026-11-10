@@ -93,7 +93,10 @@ pub fn install(shim_only: bool) -> i32 {
             claude(&["plugin", "marketplace", "remove", "adbrent"]);
             added = claude(&["plugin", "marketplace", "add", &source]);
         }
-        match added.and_then(|_| claude(&["plugin", "install", "adbrent@adbrent"])) {
+        let installed = added.and_then(|_| claude(&["plugin", "install", "adbrent@adbrent"]));
+        // Installing is a no-op when an older copy of the plugin is already there.
+        claude(&["plugin", "update", "adbrent@adbrent"]);
+        match installed {
             Some(true) => println!("Claude Code plugin installed. New sessions share devices automatically."),
             Some(false) => println!(
                 "Could not install the Claude Code plugin. Inside Claude Code, run:\n  /plugin marketplace add {source}\n  /plugin install adbrent@adbrent"

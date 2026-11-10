@@ -1,12 +1,12 @@
 #!/bin/sh
 # Entry point for the adbrent Claude Code hooks: hands the hook to the adbrent
 # binary. When a session starts on a machine that does not have this version of
-# the binary, it is fetched first: a prebuilt one from the GitHub release,
-# checked against the checksum below, or else built with cargo.
+# the binary (or a newer one), it is fetched first: a prebuilt one from the
+# GitHub release, checked against the checksum below, or else built with cargo.
 #
 # ADBRENT_NO_FETCH=1 turns the fetching off (use whatever binary is installed).
 
-VERSION=0.4.1
+VERSION=0.4.2
 REPO=iammosab/adbrent
 
 event="$1"
@@ -16,8 +16,8 @@ bin="$home/bin/adbrent"
 # SHA-256 of each prebuilt binary of this version.
 checksum() {
   case "$1" in
-    adbrent-darwin-arm64) echo "8e9dde5bf5713bb6104a098c9c6b4ffe0bd9fd2922107885186c3b878e28545e" ;;
-    adbrent-darwin-x86_64) echo "83983bd8fe6a17d03c50a0d2b2167aa3672da00b2c35f75faf890fdbe2cfd099" ;;
+    adbrent-darwin-arm64) echo "dc6ebe954bb64243772562721b2f9e44f9e407276696cb28aba1bffc4f3938f6" ;;
+    adbrent-darwin-x86_64) echo "42add1721337031b2038a04dc3cee413b847c8e76f70445b925c79d4998fe764" ;;
   esac
 }
 
@@ -25,8 +25,15 @@ sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
 }
 
+# Is the installed binary this version or newer? A session that has been open
+# since before an update still runs an older copy of this script, and that copy
+# must never replace a newer binary with its own older one.
 current() {
-  [ -x "$bin" ] && [ "$("$bin" version 2>/dev/null)" = "adbrent $VERSION" ]
+  [ -x "$bin" ] || return 1
+  have="$("$bin" version 2>/dev/null | sed 's/^adbrent //')"
+  [ -n "$have" ] || return 1
+  newest="$(printf '%s\n%s\n' "$have" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+  [ "$newest" = "$have" ]
 }
 
 fetch() {

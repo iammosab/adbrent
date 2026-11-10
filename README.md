@@ -117,8 +117,8 @@ a job cut loose from the agent's process can only be matched to its session by t
 
 ### Update
 
-In Claude Code, `/plugin marketplace update adbrent`, then restart your sessions: the
-next one fetches the matching program. With cargo, repeat the two install commands with
+In Claude Code, `/plugin marketplace update adbrent` and `/plugin update adbrent@adbrent`,
+then restart your sessions: the next one fetches the matching program. With cargo, repeat the two install commands with
 `--force` on the first.
 
 ### Uninstall
