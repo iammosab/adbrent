@@ -62,7 +62,8 @@ fn session_start(id: &str, v: &Value) {
         ones; never work around a refusal. `adbrent status` lists devices, models and renters (name one with \
         `adb -s <serial>` when the task needs a particular device), `adbrent rent --wait` \
         queues when all are taken, and `adbrent release` hands yours back once you no longer need it. \
-        If adbrent gets in your way or a refusal looks wrong, record it with `adbrent feedback \"<what happened>\"`; the user reads those.";
+        To let a helper session you start use your device, run `adbrent share` and give it the code; \
+        it runs `adbrent join <code>`. If adbrent gets in your way or a refusal looks wrong, record it with `adbrent feedback \"<what happened>\"`; the user reads those.";
     println!(
         "{}",
         json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}})
@@ -122,6 +123,7 @@ fn session_end(id: &str, v: &Value) {
     if v["reason"].as_str() != Some("clear") {
         let owner = format!("s:{id}");
         let _ = store::release(|l| l.owner == owner);
+        let _ = store::leave(&owner);
     }
     store::remove_session(id);
 }

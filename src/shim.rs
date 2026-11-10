@@ -28,8 +28,10 @@ fn rent_or_die(real: &Path, serial: &str, me: &Me, devs: &[Device]) {
         ),
         Claim::Rented { .. } => {}
         Claim::Refused(msg) => die(msg),
-        // Never let a state problem take adb away: warn and carry on.
-        Claim::Unrecorded(e) => eprintln!("adbrent: warning: rental not recorded ({e})"),
+        Claim::Unrecorded(e) if std::env::var_os("ADBRENT_ALLOW_UNRECORDED").is_some() => {
+            eprintln!("adbrent: warning: rental not recorded ({e})")
+        }
+        Claim::Unrecorded(e) => die(desk::unrecorded(&e)),
     }
 }
 
@@ -49,11 +51,21 @@ fn list(real: &PathBuf, args: Vec<OsString>, me: &Me) -> ! {
         Ok(o) => o,
         Err(_) => exec(real, args),
     };
-    let hidden: Vec<String> = store::leases()
+    let mut hidden: Vec<String> = store::leases()
         .into_iter()
-        .filter(|l| l.owner != me.owner)
+        .filter(|l| !l.allows(me))
         .map(|l| l.serial)
         .collect();
+    let mine: Vec<String> = store::leases()
+        .into_iter()
+        .filter(|l| l.allows(me))
+        .map(|l| l.serial)
+        .collect();
+    hidden.extend(
+        store::list("exclude")
+            .into_iter()
+            .filter(|s| !mine.contains(s)),
+    );
     let mut dropped = 0;
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         if line
@@ -67,7 +79,7 @@ fn list(real: &PathBuf, args: Vec<OsString>, me: &Me) -> ! {
         }
     }
     if dropped > 0 {
-        eprintln!("adbrent: {dropped} device(s) not listed: rented by other agents. `adbrent status` shows them.");
+        eprintln!("adbrent: {dropped} device(s) not listed: rented by other agents or off limits. `adbrent status` shows them.");
     }
     exit(out.status.code().unwrap_or(1))
 }
@@ -149,11 +161,7 @@ pub fn run(mut args: Vec<OsString>) -> ! {
     let leases = store::leases();
     let mine: Vec<&Device> = pool
         .iter()
-        .filter(|d| {
-            leases
-                .iter()
-                .any(|l| l.serial == d.serial && l.owner == me.owner)
-        })
+        .filter(|d| leases.iter().any(|l| l.serial == d.serial && l.allows(&me)))
         .copied()
         .collect();
     let chosen = match mine.len() {
@@ -162,7 +170,7 @@ pub fn run(mut args: Vec<OsString>) -> ! {
             if !pool.iter().any(|d| d.ready()) {
                 exec(&real, args); // nothing usable: let adb report it
             }
-            match desk::pick(&real, &me, &pool, &devs) {
+            match desk::pick(&real, &me, &pool) {
                 Ok(d) => {
                     announce(d.name());
                     d.serial.clone()

@@ -135,8 +135,9 @@ cargo, also run `cargo uninstall adbrent`.
 address no device (`adb version`, `adb connect`, `adb forward --list`) pass straight
 through.
 
-Plain `adb` hands out the first suitable free device. When a task needs a particular one,
-such as a phone and not a TV, the agent should look at `adbrent status` and name it with
+Plain `adb` hands out a free device that nobody is using, phones and tablets first: a TV,
+a watch or a car unit is handed out only when nothing else is free. When a task needs a
+particular device, the agent should look at `adbrent status` and name it with
 `adb -s <serial>`. The plugin tells Claude Code agents this at the start of each session.
 
 ## Commands
@@ -149,6 +150,11 @@ adbrent rent [SERIAL] [--wait[=SECONDS]] [--force]
 adbrent release [SERIAL...]        Hand back your devices (all of them by default)
 adbrent release --force SERIAL     Take a device back from whoever holds it
 adbrent release --force --all      Clear every rental
+adbrent share [SERIAL]             Print a code that lets another session use your device
+adbrent join CODE                  Use the device shared under CODE alongside its renter
+adbrent exclude [SERIAL]           Put a device off limits to agents (no SERIAL: list;
+                                   --remove SERIAL: undo)
+adbrent serve [--port N]           Live status page on http://127.0.0.1:7878
 adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
                                    outside use (no TEXT: list; --remove TEXT: undo)
 adbrent log [-n N] [--json]        Recent refusals, forced rentals and feedback
@@ -168,6 +174,47 @@ SERIAL          MODEL                STATE   RENTED BY
 R5CT20ABCDE     SM S911B             device  nobody, but in use outside adbrent (logcat)
 emulator-5554   sdk gphone64 arm64   device  -
 ```
+
+## Live status page
+
+```sh
+adbrent serve
+```
+
+opens a page on `http://127.0.0.1:7878` that shows every device, who rents it and for how
+long, what is using a device outside adbrent, and a running feed of refusals, forced
+rentals and agent feedback. A rented device has a **Take back** button. The page refreshes
+every few seconds and is served to your own machine only.
+
+![The adbrent status page: four devices, two of them rented, and recent activity](assets/status-page.png)
+
+## Sharing a device with a helper session
+
+A rental belongs to one session. When that session hands part of its work to another
+session (a delegated task, a helper agent in its own process), the helper would be refused
+the device. The renter can let it in:
+
+```console
+$ adbrent share            # in the session that rents the device
+4f9a1c
+$ adbrent join 4f9a1c      # in the helper session
+3A021FDJH000XY
+```
+
+The helper can then use that device, with or without naming it, for as long as the rental
+lasts. It cannot end the rental; when the renter releases the device or its session ends,
+the sharing ends too. Agents are told about this at the start of each session.
+
+## Keeping a device away from agents
+
+```sh
+adbrent exclude <serial>
+```
+
+puts a device off limits: plain `adb` never picks it, naming it is refused, and agents do
+not see it in `adb devices`. `adbrent exclude` lists the excluded devices and
+`adbrent exclude --remove <serial>` brings one back. Use it for your personal phone, or
+for a device you want left alone for a while.
 
 ## Feedback from agents
 
@@ -285,8 +332,10 @@ the next time anyone asks for it.
 - An MCP tool that picks a device itself, without naming one in its arguments, is not
   checked.
 - Inside Claude Code's Bash sandbox, adbrent can read rentals but cannot record new ones
-  unless `~/.adbrent` is writable (`sandbox.filesystem.allowWrite`). It still refuses
-  devices that others hold, but warns and runs the command without renting.
+  unless `~/.adbrent` is writable (`sandbox.filesystem.allowWrite`). A command whose
+  rental cannot be recorded is stopped, with that fix in the message, because running it
+  would leave the device looking free to everyone else. `ADBRENT_ALLOW_UNRECORDED=1`
+  restores the old behaviour of warning and running anyway.
 - Rentals are local to one machine and one user account.
 
 ## Troubleshooting
@@ -297,6 +346,8 @@ the next time anyone asks for it.
 | A Claude Code session still drives any device | The session started before `adbrent install`; restart it. `which adb` inside the session should print `~/.adbrent/shim/adb`. |
 | A device stays rented by a session that is idle | The session is still open. Close it, or run `adbrent release --force <serial>`. |
 | A device is reported in use outside adbrent, and you know it is not | Something left a command running on it; the message and `adbrent status` name it. Stop it, tell adbrent to disregard it with `adbrent ignore <part of its name>`, or run `adbrent rent --force <serial>`. |
+| `cannot record a rental ... so the command was not run` | adbrent could not write to `~/.adbrent`, usually because the session runs sandboxed. Add `~/.adbrent` to `sandbox.filesystem.allowWrite` in your Claude Code settings. |
+| A helper or delegated session is refused its parent's device | Run `adbrent share` in the parent and `adbrent join <code>` in the helper. |
 | The plugin did not install | Run the two steps yourself: `claude plugin marketplace add iammosab/adbrent` and `claude plugin install adbrent@adbrent`. |
 | A session says adbrent is not active | The program could not be downloaded or built. Check the network, or install it with cargo as above. |
 

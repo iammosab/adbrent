@@ -23,11 +23,21 @@ pub struct Lease {
     pub start: u64,
     pub label: String,
     pub since: u64,
+    /// Other sessions the holder has let in with `adbrent share`.
+    #[serde(default)]
+    pub guests: Vec<String>,
+    /// The code those sessions joined with, once one has been made.
+    #[serde(default)]
+    pub code: String,
 }
 
 impl Lease {
     pub fn alive(&self) -> bool {
         proc::alive(self.pid, self.start)
+    }
+    /// May `me` use this device: its renter, or a session the renter let in.
+    pub fn allows(&self, me: &Me) -> bool {
+        self.owner == me.owner || self.guests.contains(&me.owner)
     }
     pub fn age(&self) -> String {
         let s = now().saturating_sub(self.since);
@@ -141,46 +151,94 @@ pub fn adopt(me: &Me) -> io::Result<()> {
 
 /// The live rental on `serial` held by someone other than `me`, if any.
 pub fn held_by_other(serial: &str, me: &Me) -> Option<Lease> {
-    read_lease(serial).filter(|l| l.owner != me.owner && l.alive())
+    read_lease(serial).filter(|l| !l.allows(me) && l.alive())
 }
 
 /// True when `me` already holds `serial` and nothing needs writing.
 pub fn held_by_me(serial: &str, me: &Me) -> bool {
-    read_lease(serial).is_some_and(|l| l.owner == me.owner && l.alive())
+    read_lease(serial).is_some_and(|l| l.allows(me) && l.alive())
 }
 
 /// Rent `serial` for `me`. `Ok(Ok(true))` is a new rental, `Ok(Ok(false))` one
 /// already held, `Ok(Err(lease))` means another live owner holds it.
 pub fn acquire(serial: &str, me: &Me) -> io::Result<Result<bool, Lease>> {
     let _lock = lock()?;
-    let mut since = now();
-    let mut new = true;
-    if let Some(l) = read_lease(serial) {
-        if l.owner == me.owner {
-            // Still held under a live process: leave it alone, whichever of the
-            // session's processes is asking (a background job is not the session).
-            if l.alive() {
-                return Ok(Ok(false));
-            }
-            // Same session under a new process (a resumed session): keep the rental.
-            since = l.since;
-            new = false;
-        } else if l.alive() {
-            return Ok(Err(l));
-        } else {
-            record_span(&l);
-        }
-    }
-    let lease = Lease {
+    let mut lease = Lease {
         serial: serial.to_string(),
         owner: me.owner.clone(),
         pid: me.pid,
         start: me.start,
         label: me.label.clone(),
-        since,
+        since: now(),
+        guests: Vec::new(),
+        code: String::new(),
     };
+    let mut new = true;
+    if let Some(l) = read_lease(serial) {
+        if l.alive() {
+            // Held under a live process. Ours (as renter or guest): leave it alone,
+            // whichever of the session's processes is asking. Otherwise: refused.
+            return Ok(if l.allows(me) { Ok(false) } else { Err(l) });
+        }
+        if l.owner == me.owner {
+            // Same session under a new process (a resumed session): keep the rental.
+            lease.since = l.since;
+            lease.guests = l.guests;
+            lease.code = l.code;
+            new = false;
+        } else {
+            record_span(&l);
+        }
+    }
     write_json(&lease_path(serial), &lease)?;
     Ok(Ok(new))
+}
+
+/// Make a code that lets other sessions use `serial` alongside `me`, its renter.
+pub fn share(serial: &str, me: &Me) -> io::Result<Option<String>> {
+    let _lock = lock()?;
+    let Some(mut l) = read_lease(serial).filter(|l| l.owner == me.owner && l.alive()) else {
+        return Ok(None);
+    };
+    if l.code.is_empty() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        l.code = format!(
+            "{:06x}",
+            (nanos ^ std::process::id().wrapping_mul(2_654_435_761)) & 0xff_ffff
+        );
+        write_json(&lease_path(serial), &l)?;
+    }
+    Ok(Some(l.code))
+}
+
+/// Let `me` in on the device whose renter made `code`. Returns its serial.
+pub fn join(code: &str, me: &Me) -> io::Result<Option<String>> {
+    let _lock = lock()?;
+    let Some(mut l) = all()
+        .into_iter()
+        .find(|l| !l.code.is_empty() && l.code == code && l.alive())
+    else {
+        return Ok(None);
+    };
+    if !l.allows(me) {
+        l.guests.push(me.owner.clone());
+        write_json(&lease_path(&l.serial), &l)?;
+    }
+    Ok(Some(l.serial))
+}
+
+/// Take `owner` off every device it was let in on.
+pub fn leave(owner: &str) -> io::Result<()> {
+    let _lock = lock()?;
+    for mut l in all() {
+        if l.guests.iter().any(|g| g == owner) {
+            l.guests.retain(|g| g != owner);
+            write_json(&lease_path(&l.serial), &l)?;
+        }
+    }
+    Ok(())
 }
 
 /// Remove rentals matching `pick`, plus any whose owner has died. Returns the
@@ -234,13 +292,11 @@ pub fn spans(serial: &str) -> Vec<(u64, u64)> {
     spans
 }
 
-fn ignore_path() -> PathBuf {
-    home().join("ignore")
-}
-
-/// Pieces of text that mark an on-device command as a helper to disregard.
-pub fn ignored() -> Vec<String> {
-    fs::read_to_string(ignore_path())
+/// A user-kept list, one entry per line: `ignore` (pieces of text that mark
+/// an on-device command as a helper to disregard) or `exclude` (serials of
+/// devices agents must leave alone).
+pub fn list(name: &str) -> Vec<String> {
+    fs::read_to_string(home().join(name))
         .unwrap_or_default()
         .lines()
         .map(str::trim)
@@ -249,14 +305,11 @@ pub fn ignored() -> Vec<String> {
         .collect()
 }
 
-pub fn set_ignored(patterns: &[String]) -> io::Result<()> {
+pub fn set_list(name: &str, entries: &[String]) -> io::Result<()> {
     fs::create_dir_all(home())?;
     fs::write(
-        ignore_path(),
-        patterns
-            .iter()
-            .map(|p| format!("{p}\n"))
-            .collect::<String>(),
+        home().join(name),
+        entries.iter().map(|e| format!("{e}\n")).collect::<String>(),
     )
 }
 

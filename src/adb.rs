@@ -127,13 +127,16 @@ pub struct Usage {
     pub streams: Vec<Stream>,
     /// How long ago the device last saw input, when it reports that.
     pub idle_ms: Option<u64>,
+    /// The device's build characteristics (`tv`, `watch`, `default`, ...).
+    pub characteristics: String,
 }
 
 /// Runs on the device. Every adb stream is a child of adbd; `$$` is this probe
 /// itself and `abb` is adbd's own permanent helper.
 const PROBE: &str = "a=$(pidof adbd); ps -A -o PID,PPID,ETIME,ARGS 2>/dev/null | while read p pp t args; do \
     [ \"$pp\" = \"$a\" ] && [ \"$p\" != \"$$\" ] && [ \"$args\" != abb ] && echo \"S $t $args\"; done; \
-    dumpsys power 2>/dev/null | grep -m1 'astUserActivityTime=.*ms ago'";
+    dumpsys power 2>/dev/null | grep -m1 'astUserActivityTime=.*ms ago'; \
+    echo \"C $(getprop ro.build.characteristics)\"";
 
 /// `[[days-]hours:]minutes:seconds`, as ps prints elapsed time.
 fn parse_elapsed(text: &str) -> Option<u64> {
@@ -151,7 +154,9 @@ fn parse_elapsed(text: &str) -> Option<u64> {
 pub fn parse_usage(output: &str) -> Usage {
     let mut usage = Usage::default();
     for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("S ") {
+        if let Some(kind) = line.strip_prefix("C ") {
+            usage.characteristics = kind.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("S ") {
             let (elapsed, args) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
             if let Some(age) = parse_elapsed(elapsed) {
                 usage.streams.push(Stream {
@@ -342,6 +347,10 @@ mod tests {
             "app_process com.android.commands.am.Am instrument -w com.example/.Run"
         );
         assert_eq!(u.idle_ms, Some(476844));
+        assert_eq!(
+            parse_usage("C tv,nosdcard\n").characteristics,
+            "tv,nosdcard"
+        );
         let none = parse_usage("REAL -s AAA shell whatever\n");
         assert!(none.streams.is_empty() && none.idle_ms.is_none());
     }

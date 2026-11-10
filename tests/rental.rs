@@ -18,6 +18,10 @@ done
 if [ "$3" = shell ] && [ "$2" = "$FAKE_BUSY" ]; then
   case "$4" in *pidof*) echo "S ${FAKE_AGE:-00:05} logcat -v time"; exit 0 ;; esac
 fi
+# FAKE_TV names a device that reports itself as a TV.
+if [ "$3" = shell ] && [ "$2" = "$FAKE_TV" ]; then
+  case "$4" in *pidof*) echo "C tv,nosdcard"; exit 0 ;; esac
+fi
 echo "REAL $*"
 "#;
 
@@ -104,11 +108,11 @@ fn each_session_gets_its_own_device() {
     assert_eq!(c.status.code(), Some(1));
     assert!(out(&c).is_empty(), "the real adb must not run");
     assert!(
-        err(&c).contains("already rented by another agent"),
+        err(&c).contains("every connected device is rented by another agent"),
         "{}",
         err(&c)
     );
-    assert!(err(&c).contains("no device is free"), "{}", err(&c));
+    assert!(err(&c).contains("adbrent rent --wait"), "{}", err(&c));
 }
 
 #[test]
@@ -521,4 +525,186 @@ fn refusals_and_feedback_are_logged_for_the_user() {
         "{link}"
     );
     assert!(link.contains("refused%3A%20rented"), "{link}");
+}
+
+#[test]
+fn a_renter_can_let_a_helper_session_use_its_device() {
+    let d = Desk::new("share");
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    assert_eq!(
+        d.adb("helper", &["-s", "AAA", "shell", "id"]).status.code(),
+        Some(1)
+    );
+    assert_eq!(
+        d.rent("helper", &["share", "AAA"]).status.code(),
+        Some(1),
+        "only the renter can share"
+    );
+
+    let code = out(&d.rent("a", &["share"])).trim().to_string();
+    assert_eq!(code.len(), 6, "{code}");
+    assert_eq!(d.rent("helper", &["join", "nope"]).status.code(), Some(1));
+    assert_eq!(out(&d.rent("helper", &["join", &code])), "AAA\n");
+
+    // The helper now uses the device, named or not; everyone else is still refused.
+    assert_eq!(
+        out(&d.adb("helper", &["-s", "AAA", "shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    assert_eq!(
+        out(&d.adb("helper", &["shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    assert!(out(&d.adb("helper", &["devices"])).contains("AAA"));
+    assert_eq!(
+        d.adb("stranger", &["-s", "AAA", "shell", "id"])
+            .status
+            .code(),
+        Some(1)
+    );
+    assert!(out(&d.rent("a", &["status"])).contains("shared with 1 other session"));
+
+    // A helper cannot end the rental; when the renter does, the sharing ends with it.
+    assert!(out(&d.rent("helper", &["release", "AAA"])).contains("Nothing to release"));
+    assert_eq!(
+        d.adb("stranger", &["-s", "AAA", "shell", "id"])
+            .status
+            .code(),
+        Some(1)
+    );
+    assert!(out(&d.rent("a", &["release"])).contains("Released AAA"));
+    assert_eq!(
+        out(&d.adb("stranger", &["-s", "AAA", "shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    assert_eq!(
+        d.adb("helper", &["-s", "AAA", "shell", "id"]).status.code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn excluded_devices_are_off_limits_and_tvs_are_handed_out_last() {
+    let d = Desk::new("exclude");
+    assert_eq!(d.rent("u", &["exclude", "AAA"]).status.code(), Some(0));
+    assert_eq!(out(&d.rent("u", &["exclude"])), "AAA\n");
+    let a = d.adb("a", &["-s", "AAA", "shell", "id"]);
+    assert_eq!(a.status.code(), Some(1));
+    assert!(
+        err(&a).contains("off limits") && err(&a).contains("free now: BBB"),
+        "{}",
+        err(&a)
+    );
+    assert!(!out(&d.adb("a", &["devices"])).contains("AAA"));
+    assert_eq!(out(&d.adb("a", &["shell", "id"])), "REAL -s BBB shell id\n");
+    assert_eq!(
+        d.adb("b", &["shell", "id"]).status.code(),
+        Some(1),
+        "the excluded device is never handed out"
+    );
+    assert!(out(&d.rent("u", &["status"])).contains("off limits"));
+    d.rent("a", &["release"]);
+    d.rent("u", &["exclude", "--remove", "AAA"]);
+
+    // AAA says it is a TV: a session that names no device gets the phone first.
+    let tv = |session: &str| {
+        d.command(d.dir.join("shim/adb"), session, &["shell", "id"])
+            .env("FAKE_TV", "AAA")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(out(&tv("c")), "REAL -s BBB shell id\n");
+    assert_eq!(
+        out(&tv("e")),
+        "REAL -s AAA shell id\n",
+        "the TV is still used when nothing else is free"
+    );
+}
+
+#[test]
+fn a_rental_that_cannot_be_recorded_stops_the_command() {
+    let d = Desk::new("readonly");
+    // A state folder that cannot be created: its parent is a file.
+    std::fs::write(d.dir.join("blocker"), "").unwrap();
+    let run = |allow: bool| {
+        let mut c = d.command(d.dir.join("shim/adb"), "a", &["-s", "AAA", "shell", "id"]);
+        c.env("ADBRENT_HOME", d.dir.join("blocker/home"));
+        if allow {
+            c.env("ADBRENT_ALLOW_UNRECORDED", "1");
+        }
+        c.output().unwrap()
+    };
+    let stopped = run(false);
+    assert_eq!(stopped.status.code(), Some(1));
+    assert!(out(&stopped).is_empty(), "the real adb must not run");
+    assert!(
+        err(&stopped).contains("cannot record a rental") && err(&stopped).contains("allowWrite"),
+        "{}",
+        err(&stopped)
+    );
+    assert_eq!(out(&run(true)), "REAL -s AAA shell id\n");
+}
+
+#[test]
+fn the_status_page_shows_devices_and_takes_one_back() {
+    use std::io::{BufRead, BufReader, Read};
+    let d = Desk::new("serve");
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    let mut server = d
+        .command(
+            env!("CARGO_BIN_EXE_adbrent").into(),
+            "viewer",
+            &["serve", "--port", "0"],
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(server.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port: u16 = line
+        .split("127.0.0.1:")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let ask = |request: &str| {
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.write_all(request.as_bytes()).unwrap();
+        let mut reply = String::new();
+        s.read_to_string(&mut reply).unwrap();
+        reply
+    };
+    let host = format!("Host: 127.0.0.1:{port}\r\n");
+    assert!(ask(&format!("GET / HTTP/1.1\r\n{host}\r\n")).contains("<title>adbrent</title>"));
+    let state = ask(&format!("GET /api/state HTTP/1.1\r\n{host}\r\n"));
+    assert!(
+        state.contains(r#""serial":"AAA""#) && state.contains("session a"),
+        "{state}"
+    );
+    // Another site, or a page that cannot send our header, gets nowhere.
+    assert!(
+        ask("GET /api/state HTTP/1.1\r\nHost: evil.example\r\n\r\n").starts_with("HTTP/1.1 403")
+    );
+    assert!(
+        ask(&format!("POST /api/release/AAA HTTP/1.1\r\n{host}\r\n")).starts_with("HTTP/1.1 404")
+    );
+    assert_eq!(
+        d.adb("b", &["-s", "AAA", "shell", "id"]).status.code(),
+        Some(1)
+    );
+    let taken = ask(&format!(
+        "POST /api/release/AAA HTTP/1.1\r\n{host}X-Adbrent: 1\r\n\r\n"
+    ));
+    assert!(taken.contains(r#""released":true"#), "{taken}");
+    assert_eq!(
+        out(&d.adb("b", &["-s", "AAA", "shell", "id"])),
+        "REAL -s AAA shell id\n"
+    );
+    server.kill().unwrap();
+    let _ = server.wait();
 }

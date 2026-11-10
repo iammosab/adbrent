@@ -11,6 +11,7 @@ mod desk;
 mod hook;
 mod install;
 mod proc;
+mod serve;
 mod shim;
 mod store;
 

@@ -3,7 +3,8 @@
 use crate::adb::{self, Device};
 use crate::desk::{self, Claim};
 use crate::store::{self, Lease};
-use crate::{hook, install};
+use crate::{hook, install, serve};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 const HELP: &str = "\
@@ -19,8 +20,13 @@ USAGE
   adbrent release [SERIAL...]      Hand back your devices (all of them by default)
   adbrent release --force SERIAL   Take a device back from whoever holds it
   adbrent release --force --all    Clear every rental
+  adbrent share [SERIAL]           Print a code that lets another session use your device
+  adbrent join CODE                Use the device shared under CODE alongside its renter
+  adbrent exclude [SERIAL]         Put a device off limits to agents (no SERIAL: list;
+                                   --remove SERIAL)
   adbrent ignore [TEXT]            Stop counting on-device commands containing TEXT
                                    as outside use (no TEXT: list; --remove TEXT)
+  adbrent serve [--port N]         Live status page on http://127.0.0.1:7878
   adbrent log [-n N] [--json]      Recent refusals, forced rentals and feedback
   adbrent feedback [TEXT]          Record a problem or a suggestion (no TEXT: list them)
   adbrent feedback --issue         Print a GitHub issue link filled in from the latest one
@@ -38,7 +44,11 @@ pub fn run(args: Vec<String>) -> i32 {
         Some("status" | "ls") => status(rest),
         Some("rent") => rent(rest),
         Some("release") => release(rest),
-        Some("ignore") => ignore(rest),
+        Some("share") => share(rest),
+        Some("join") => join(rest),
+        Some("exclude") => edit_list("exclude", rest, "No device is excluded."),
+        Some("ignore") => edit_list("ignore", rest, "Nothing is ignored."),
+        Some("serve") => serve::run(rest),
         Some("log") => log(rest),
         Some("feedback") => feedback(rest),
         Some("env") => {
@@ -63,75 +73,85 @@ pub fn run(args: Vec<String>) -> i32 {
     }
 }
 
-fn connected() -> Vec<Device> {
-    adb::real_adb()
-        .map(|real| adb::devices(&real, &[]))
-        .unwrap_or_default()
+/// A device as the user sees it: who holds it, and what else is using it.
+#[derive(serde::Serialize)]
+pub struct Row {
+    pub serial: String,
+    pub model: String,
+    pub state: String,
+    pub rented_by: Option<String>,
+    pub since: Option<u64>,
+    /// Rented by whoever is asking.
+    pub mine: bool,
+    /// Shared with whoever is asking by its renter.
+    pub guest: bool,
+    /// How many other sessions the renter has let in.
+    pub shared_with: usize,
+    pub in_use_outside_adbrent: Vec<String>,
+    /// Put off limits to agents by the user.
+    pub excluded: bool,
 }
 
-fn status(args: &[String]) -> i32 {
+/// Every connected device and every rental. `probe` reports what is using an
+/// unrented device outside adbrent; it is asked about all of them at once.
+pub fn rows(probe: &(dyn Fn(&Path, &str) -> Vec<String> + Sync)) -> Vec<Row> {
     let _ = store::release(|_| false); // sweep rentals whose owner is gone
     let me = store::me();
     let leases = store::leases();
-    let mut rows: Vec<(String, String, String, Option<&Lease>)> = connected()
-        .into_iter()
-        .map(|d| {
-            let lease = leases.iter().find(|l| l.serial == d.serial);
-            (d.serial, d.model.replace('_', " "), d.state, lease)
-        })
+    let excluded = store::list("exclude");
+    let real = adb::real_adb();
+    let devices = real
+        .as_ref()
+        .map(|real| adb::devices(real, &[]))
+        .unwrap_or_default();
+    let row = |serial: &str, model: String, state: String| {
+        let lease: Option<&Lease> = leases.iter().find(|l| l.serial == serial);
+        Row {
+            serial: serial.to_string(),
+            model,
+            state,
+            rented_by: lease.map(|l| l.label.clone()),
+            since: lease.map(|l| l.since),
+            mine: lease.is_some_and(|l| l.owner == me.owner),
+            guest: lease.is_some_and(|l| l.guests.contains(&me.owner)),
+            shared_with: lease.map_or(0, |l| l.guests.len()),
+            in_use_outside_adbrent: Vec::new(),
+            excluded: excluded.iter().any(|s| s == serial),
+        }
+    };
+    let mut rows: Vec<Row> = devices
+        .iter()
+        .map(|d| row(&d.serial, d.model.replace('_', " "), d.state.clone()))
         .collect();
     for l in &leases {
-        if !rows.iter().any(|r| r.0 == l.serial) {
-            rows.push((l.serial.clone(), String::new(), "absent".into(), Some(l)));
+        if !rows.iter().any(|r| r.serial == l.serial) {
+            rows.push(row(&l.serial, String::new(), "absent".into()));
         }
     }
-
-    // Ask each unrented device, all at once, whether something else is using it.
-    let outside: Vec<(String, Vec<String>)> = match adb::real_adb() {
-        None => Vec::new(),
-        Some(real) => std::thread::scope(|scope| {
+    if let Some(real) = &real {
+        std::thread::scope(|scope| {
             let probes: Vec<_> = rows
-                .iter()
-                .filter(|r| r.3.is_none() && r.2 == "device")
+                .iter_mut()
+                .filter(|r| r.rented_by.is_none() && !r.excluded && r.state == "device")
                 .map(|r| {
-                    (
-                        r.0.clone(),
-                        scope.spawn(|| desk::outside(&real, &r.0).streams),
-                    )
+                    let serial = r.serial.clone();
+                    (r, scope.spawn(move || probe(real, &serial)))
                 })
                 .collect();
-            probes
-                .into_iter()
-                .map(|(serial, probe)| (serial, probe.join().unwrap_or_default()))
-                .collect()
-        }),
-    };
-    let outside = |serial: &str| {
-        outside
-            .iter()
-            .find(|o| o.0 == serial)
-            .map(|o| o.1.clone())
-            .unwrap_or_default()
-    };
+            for (r, running) in probes {
+                r.in_use_outside_adbrent = running.join().unwrap_or_default();
+            }
+        });
+    }
+    rows
+}
 
+fn status(args: &[String]) -> i32 {
+    let rows = rows(&|real, serial| desk::outside(real, serial).streams);
     if args.iter().any(|a| a == "--json") {
-        let json: Vec<_> = rows
-            .iter()
-            .map(|(serial, model, state, lease)| {
-                serde_json::json!({
-                    "serial": serial,
-                    "model": model,
-                    "state": state,
-                    "rented_by": lease.map(|l| &l.label),
-                    "since": lease.map(|l| l.since),
-                    "mine": lease.is_some_and(|l| l.owner == me.owner),
-                    "in_use_outside_adbrent": outside(serial),
-                })
-            })
-            .collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&json).unwrap_or_default()
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
         );
         return 0;
     }
@@ -139,28 +159,122 @@ fn status(args: &[String]) -> i32 {
         println!("No devices connected.");
         return 0;
     }
-    let w0 = rows.iter().map(|r| r.0.len()).max().unwrap_or(0).max(6);
-    let w1 = rows.iter().map(|r| r.1.len()).max().unwrap_or(0).max(5);
-    let w2 = rows.iter().map(|r| r.2.len()).max().unwrap_or(0).max(5);
+    let w0 = rows
+        .iter()
+        .map(|r| r.serial.len())
+        .max()
+        .unwrap_or(0)
+        .max(6);
+    let w1 = rows.iter().map(|r| r.model.len()).max().unwrap_or(0).max(5);
+    let w2 = rows.iter().map(|r| r.state.len()).max().unwrap_or(0).max(5);
     println!(
         "{:w0$}  {:w1$}  {:w2$}  RENTED BY",
         "SERIAL", "MODEL", "STATE"
     );
-    for (serial, model, state, lease) in &rows {
-        let renter = match lease {
-            None => match outside(serial) {
-                streams if streams.is_empty() => "-".to_string(),
-                streams => format!(
+    for r in &rows {
+        let renter = match (&r.rented_by, r.since) {
+            (Some(who), Some(since)) => {
+                let held = format!("{who}, {}", age(store::now().saturating_sub(since)));
+                let shared = match r.shared_with {
+                    0 => String::new(),
+                    n => format!(
+                        ", shared with {n} other session{}",
+                        if n == 1 { "" } else { "s" }
+                    ),
+                };
+                match (r.mine, r.guest) {
+                    (true, _) => format!("you ({held}{shared})"),
+                    (_, true) => format!("{held}{shared}, you included"),
+                    _ => format!("{held}{shared}"),
+                }
+            }
+            _ if r.excluded => "nobody: off limits to agents (excluded)".to_string(),
+            _ if !r.in_use_outside_adbrent.is_empty() => {
+                format!(
                     "nobody, but in use outside adbrent ({})",
-                    streams.join("; ")
-                ),
-            },
-            Some(l) if l.owner == me.owner => format!("you ({}, {})", l.label, l.age()),
-            Some(l) => format!("{}, {}", l.label, l.age()),
+                    r.in_use_outside_adbrent.join("; ")
+                )
+            }
+            _ => "-".to_string(),
         };
-        println!("{serial:w0$}  {model:w1$}  {state:w2$}  {renter}");
+        println!(
+            "{:w0$}  {:w1$}  {:w2$}  {renter}",
+            r.serial, r.model, r.state
+        );
     }
     0
+}
+
+fn age(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        _ => format!("{}h{}m", secs / 3600, secs % 3600 / 60),
+    }
+}
+
+fn share(args: &[String]) -> i32 {
+    let me = store::me();
+    let mine: Vec<String> = store::leases()
+        .into_iter()
+        .filter(|l| l.owner == me.owner)
+        .map(|l| l.serial)
+        .collect();
+    let serial = match (args.first(), mine.as_slice()) {
+        (Some(serial), _) => serial.clone(),
+        (None, [only]) => only.clone(),
+        (None, []) => {
+            eprintln!("adbrent: this session rents no device to share. Rent one first (run `adb`, or `adbrent rent`).");
+            return 1;
+        }
+        (None, _) => {
+            eprintln!(
+                "adbrent: this session rents {}. Name the one to share: `adbrent share <serial>`.",
+                mine.join(", ")
+            );
+            return 1;
+        }
+    };
+    match store::share(&serial, &me) {
+        Ok(Some(code)) => {
+            println!("{code}");
+            eprintln!("adbrent: a session that runs `adbrent join {code}` can use {serial} alongside this one, for as long as this rental lasts.");
+            0
+        }
+        Ok(None) => {
+            eprintln!("adbrent: this session does not rent {serial}, so it cannot share it.");
+            1
+        }
+        Err(e) => {
+            eprintln!("adbrent: cannot share {serial}: {e}");
+            1
+        }
+    }
+}
+
+fn join(args: &[String]) -> i32 {
+    let Some(code) = args.first() else {
+        eprintln!("adbrent: join needs the code from `adbrent share`");
+        return 2;
+    };
+    let me = store::me();
+    match store::join(code, &me) {
+        Ok(Some(serial)) => {
+            println!("{serial}");
+            eprintln!("adbrent: this session may now use {serial} alongside its renter. Plain `adb` goes to it.");
+            0
+        }
+        Ok(None) => {
+            eprintln!(
+                "adbrent: no device is shared under the code `{code}` (the rental may have ended)."
+            );
+            1
+        }
+        Err(e) => {
+            eprintln!("adbrent: cannot join: {e}");
+            1
+        }
+    }
 }
 
 fn ago(event: &serde_json::Value) -> String {
@@ -279,33 +393,34 @@ fn feedback(args: &[String]) -> i32 {
     0
 }
 
-fn ignore(args: &[String]) -> i32 {
+/// Show, add to, or remove from one of the user's lists (`ignore`, `exclude`).
+fn edit_list(name: &str, args: &[String], empty: &str) -> i32 {
     let remove = args.iter().any(|a| a == "--remove");
-    let text: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    let mut list = store::ignored();
-    match text.first() {
+    let entry: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let mut list = store::list(name);
+    match entry.first() {
         None if remove => {
-            eprintln!("adbrent: --remove needs the text to stop ignoring");
+            eprintln!("adbrent: --remove needs the entry to take off the list");
             return 2;
         }
         None => {
             if list.is_empty() {
-                println!("Nothing is ignored.");
+                println!("{empty}");
             }
-            list.iter().for_each(|p| println!("{p}"));
+            list.iter().for_each(|e| println!("{e}"));
             return 0;
         }
-        Some(text) if remove => list.retain(|p| p != *text),
-        Some(text) => {
-            if !list.contains(text) {
-                list.push((*text).clone());
+        Some(entry) if remove => list.retain(|e| e != *entry),
+        Some(entry) => {
+            if !list.contains(entry) {
+                list.push((*entry).clone());
             }
         }
     }
-    match store::set_ignored(&list) {
+    match store::set_list(name, &list) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("adbrent: cannot save the ignore list: {e}");
+            eprintln!("adbrent: cannot save the {name} list: {e}");
             1
         }
     }
@@ -360,15 +475,13 @@ fn rent(args: &[String]) -> i32 {
             None => {
                 // Keep a device this session already holds; otherwise pick a free one.
                 let leases = store::leases();
-                let held = devs.iter().find(|d| {
-                    leases
-                        .iter()
-                        .any(|l| l.serial == d.serial && l.owner == me.owner)
-                });
+                let held = devs
+                    .iter()
+                    .find(|d| leases.iter().any(|l| l.serial == d.serial && l.allows(&me)));
                 let pool: Vec<&Device> = devs.iter().collect();
                 match held {
                     Some(d) => Ok(d.serial.clone()),
-                    None => desk::pick(&real, &me, &pool, &devs).map(|d| d.serial.clone()),
+                    None => desk::pick(&real, &me, &pool).map(|d| d.serial.clone()),
                 }
             }
         };
@@ -410,6 +523,9 @@ fn release(args: &[String]) -> i32 {
     }
     let me = store::me();
     let named = |l: &Lease| serials.is_empty() || serials.iter().any(|s| **s == l.serial);
+    if serials.is_empty() && !force {
+        let _ = store::leave(&me.owner); // step out of devices shared with this session
+    }
     let result = store::release(|l| named(l) && (force || l.owner == me.owner));
     match result {
         Ok(done) if done.is_empty() => {

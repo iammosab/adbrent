@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>adbrent</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6ea; --text: #1b1f24; --muted: #667080;
+  --accent: #c2410c; --ok: #15803d; --ok-bg: #e7f6ec; --warn: #a16207; --warn-bg: #fdf3d7;
+  --held: #1d4ed8; --held-bg: #e6eeff; --off: #667080; --off-bg: #eceef1; --danger: #b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #2b323b; --text: #e6edf3; --muted: #8b949e;
+    --accent: #f0883e; --ok: #3fb950; --ok-bg: #12301c; --warn: #e3b341; --warn-bg: #33290f;
+    --held: #79b8ff; --held-bg: #12264a; --off: #8b949e; --off-bg: #21262d; --danger: #ff7b72;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; padding: 28px 16px 48px; }
+main { max-width: 960px; margin: 0 auto; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
+h1 { font: 700 22px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); }
+.sub { color: var(--muted); font-size: 13px; }
+.live { margin-left: auto; font-size: 13px; color: var(--muted); }
+.live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 7px; }
+.live.down { color: var(--danger); } .live.down::before { background: var(--danger); }
+h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 26px 0 10px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.dev { display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(0, 2.4fr) 96px; gap: 14px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
+.dev:first-child, .ev:first-child { border-top: 0; }
+.model { font-weight: 600; overflow-wrap: anywhere; }
+.serial, .ev time, .ev .who { font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.what { min-width: 0; overflow-wrap: anywhere; } .act { text-align: right; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; margin-right: 8px; white-space: nowrap; }
+.free { color: var(--ok); background: var(--ok-bg); } .held { color: var(--held); background: var(--held-bg); }
+.outside { color: var(--warn); background: var(--warn-bg); } .off { color: var(--off); background: var(--off-bg); }
+.detail { color: var(--muted); font-size: 13px; }
+button { font: inherit; font-size: 13px; color: var(--danger); background: transparent; border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; cursor: pointer; }
+button:hover { border-color: var(--danger); } button:focus-visible { outline: 2px solid var(--held); outline-offset: 2px; }
+.ev { display: grid; grid-template-columns: 70px 200px minmax(0, 1fr); gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); font-size: 13px; }
+.ev .kind { font-weight: 600; } .ev .text { color: var(--muted); overflow-wrap: anywhere; }
+.empty { padding: 18px 16px; color: var(--muted); }
+@media (max-width: 640px) { .dev { grid-template-columns: 1fr; gap: 6px; } .ev { grid-template-columns: 1fr; gap: 2px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>adbrent</h1><span class="sub" id="version"></span>
+    <span class="live" id="live">connecting</span>
+  </header>
+  <h2>Devices</h2>
+  <div class="panel" id="devices"><div class="empty">Loading…</div></div>
+  <h2>Recent activity</h2>
+  <div class="panel" id="log"><div class="empty">Loading…</div></div>
+</main>
+<script>
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const span = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : `${Math.floor(s / 86400)}d`;
+
+function describe(d, now) {
+  if (d.rented_by) {
+    const shared = d.shared_with ? ` · shared with ${d.shared_with} other session${d.shared_with > 1 ? "s" : ""}` : "";
+    return ["held", "Rented", `${d.rented_by} · for ${span(Math.max(0, now - d.since))}${shared}`];
+  }
+  if (d.state !== "device") return ["off", d.state, "not ready for use"];
+  if (d.excluded) return ["off", "Off limits", "excluded from agent use"];
+  if (d.in_use_outside_adbrent.length) return ["outside", "In use outside adbrent", d.in_use_outside_adbrent.join("; ")];
+  return ["free", "Free", ""];
+}
+
+async function takeBack(serial) {
+  if (!confirm(`Take ${serial} back from the session that holds it?`)) return;
+  await fetch(`/api/release/${encodeURIComponent(serial)}`, { method: "POST", headers: { "X-Adbrent": "1" } });
+  refresh();
+}
+
+function render(state) {
+  document.getElementById("version").textContent = `v${state.version}`;
+  const devices = document.getElementById("devices");
+  devices.replaceChildren(...(state.devices.length ? state.devices.map(d => {
+    const [cls, label, detail] = describe(d, state.now);
+    const row = el("div", "dev");
+    const name = el("div");
+    name.append(el("div", "model", d.model || d.serial), el("div", "serial", d.serial));
+    const what = el("div", "what");
+    what.append(el("span", `pill ${cls}`, label), el("span", "detail", detail));
+    const act = el("div", "act");
+    if (d.rented_by) { const b = el("button", "", "Take back"); b.onclick = () => takeBack(d.serial); act.append(b); }
+    row.append(name, what, act);
+    return row;
+  }) : [el("div", "empty", "No devices connected.")]));
+  const log = document.getElementById("log");
+  log.replaceChildren(...(state.log.length ? state.log.map(e => {
+    const row = el("div", "ev");
+    const text = el("div");
+    text.append(el("span", "kind", e.kind + (e.serial ? ` ${e.serial}` : "")), el("span", "text", e.detail ? `: ${e.detail}` : ""));
+    row.append(el("time", "", `${span(Math.max(0, state.now - e.t))} ago`), el("div", "who", e.who), text);
+    return row;
+  }) : [el("div", "empty", "Nothing yet. Refusals, forced rentals and agent feedback appear here.")]));
+}
+
+async function refresh() {
+  const live = document.getElementById("live");
+  try {
+    render(await (await fetch("/api/state")).json());
+    live.className = "live"; live.textContent = "live";
+  } catch {
+    live.className = "live down"; live.textContent = "adbrent serve is not running";
+  }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
