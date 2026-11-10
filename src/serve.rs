@@ -110,7 +110,13 @@ fn handle(mut stream: TcpStream, probes: &Probes) {
             let released =
                 store::release(|l| l.serial == serial).is_ok_and(|done| !done.is_empty());
             if released {
-                store::log_event("taken back", &store::me(), &serial, "from the status page");
+                let you = store::Me {
+                    owner: String::new(),
+                    pid: 0,
+                    start: 0,
+                    label: "you".into(),
+                };
+                store::log_event("taken back", &you, &serial, "from the status page");
             }
             respond(
                 &mut stream,

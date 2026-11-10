@@ -348,6 +348,7 @@ the next time anyone asks for it.
 | A device is reported in use outside adbrent, and you know it is not | Something left a command running on it; the message and `adbrent status` name it. Stop it, tell adbrent to disregard it with `adbrent ignore <part of its name>`, or run `adbrent rent --force <serial>`. |
 | `cannot record a rental ... so the command was not run` | adbrent could not write to `~/.adbrent`, usually because the session runs sandboxed. Add `~/.adbrent` to `sandbox.filesystem.allowWrite` in your Claude Code settings. |
 | A helper or delegated session is refused its parent's device | Run `adbrent share` in the parent and `adbrent join <code>` in the helper. |
+| `this adb is an adbrent stand-in that another adbrent took for the real adb` | Two copies of adbrent are on one PATH and no real adb was found after them. Put platform-tools on PATH, or set `ADBRENT_REAL_ADB` to the real adb. |
 | The plugin did not install | Run the two steps yourself: `claude plugin marketplace add iammosab/adbrent` and `claude plugin install adbrent@adbrent`. |
 | A session says adbrent is not active | The program could not be downloaded or built. Check the network, or install it with cargo as above. |
 

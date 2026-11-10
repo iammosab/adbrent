@@ -708,3 +708,84 @@ fn the_status_page_shows_devices_and_takes_one_back() {
     server.kill().unwrap();
     let _ = server.wait();
 }
+
+/// Run to the end or be killed: a runaway must fail a test, never the machine.
+fn finish(mut command: Command) -> Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed().as_secs() > 10 {
+            child.kill().unwrap();
+            panic!("still running after 10 seconds");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn two_copies_on_one_path_never_hand_off_to_each_other() {
+    let d = Desk::new("twins");
+    // A second, separately installed copy with its own stand-in.
+    let other = d.dir.join("other");
+    std::fs::create_dir_all(other.join("bin")).unwrap();
+    std::fs::create_dir_all(other.join("shim")).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_adbrent"), other.join("bin/adbrent")).unwrap();
+    symlink(other.join("bin/adbrent"), other.join("shim/adb")).unwrap();
+    // The real adb, found by name further along the PATH.
+    std::fs::create_dir_all(d.dir.join("sdk")).unwrap();
+    std::fs::copy(d.dir.join("real-adb"), d.dir.join("sdk/adb")).unwrap();
+    let path = |dirs: &[&str]| {
+        dirs.iter()
+            .map(|x| d.dir.join(x).display().to_string())
+            .chain(["/usr/bin:/bin".to_string()])
+            .collect::<Vec<_>>()
+            .join(":")
+    };
+    let run = |path: String, real: Option<PathBuf>| {
+        let mut c = d.command(d.dir.join("shim/adb"), "a", &["-s", "AAA", "shell", "id"]);
+        c.env("PATH", path)
+            .env_remove("ADBRENT_REAL_ADB")
+            .env_remove("ADBRENT_HANDOFF");
+        if let Some(real) = real {
+            c.env("ADBRENT_REAL_ADB", real);
+        }
+        finish(c)
+    };
+
+    // Both stand-ins come before the real adb: the real one is still the one used.
+    assert_eq!(
+        out(&run(path(&["shim", "other/shim", "sdk"]), None)),
+        "REAL -s AAA shell id\n"
+    );
+    // No real adb at all: say so, at once.
+    let none = run(path(&["shim", "other/shim"]), None);
+    assert_eq!(none.status.code(), Some(127));
+    assert!(
+        err(&none).contains("cannot find the real adb"),
+        "{}",
+        err(&none)
+    );
+    // Pointed at the other copy by hand: refused the same way.
+    assert_eq!(
+        run(path(&["shim"]), Some(other.join("shim/adb")))
+            .status
+            .code(),
+        Some(127)
+    );
+    // A copy under a name we cannot recognise is caught on arrival, one step in.
+    std::fs::create_dir_all(d.dir.join("odd")).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_adbrent"), d.dir.join("odd/renamed")).unwrap();
+    symlink(d.dir.join("odd/renamed"), d.dir.join("odd/adb")).unwrap();
+    let caught = run(path(&["shim"]), Some(d.dir.join("odd/adb")));
+    assert!(out(&caught).is_empty());
+    assert!(
+        err(&caught).contains("another adbrent took for the real adb"),
+        "{}",
+        err(&caught)
+    );
+}

@@ -5,11 +5,11 @@ use crate::desk::{self, Claim};
 use crate::store::{self, Me};
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::path::Path;
+use std::process::{exit, Stdio};
 
-fn exec(real: &PathBuf, args: Vec<OsString>) -> ! {
-    let err = Command::new(real).args(args).exec();
+fn exec(real: &Path, args: Vec<OsString>) -> ! {
+    let err = adb::command(real).args(args).exec();
     eprintln!("adbrent: cannot run {}: {err}", real.display());
     exit(127)
 }
@@ -42,8 +42,8 @@ fn announce(name: String) {
 }
 
 /// `adb devices`, minus the devices other agents hold.
-fn list(real: &PathBuf, args: Vec<OsString>, me: &Me) -> ! {
-    let out = match Command::new(real)
+fn list(real: &Path, args: Vec<OsString>, me: &Me) -> ! {
+    let out = match adb::command(real)
         .args(&args)
         .stderr(Stdio::inherit())
         .output()
@@ -85,6 +85,11 @@ fn list(real: &PathBuf, args: Vec<OsString>, me: &Me) -> ! {
 }
 
 pub fn run(mut args: Vec<OsString>) -> ! {
+    // Reached as the "real adb" of another adbrent: stop, never hand off again.
+    if std::env::var_os(adb::HANDOFF).is_some() {
+        eprintln!("adbrent: this adb is an adbrent stand-in that another adbrent took for the real adb (two copies are on PATH). Set ADBRENT_REAL_ADB to the real adb.");
+        exit(126)
+    }
     let Some(real) = adb::real_adb() else {
         eprintln!("adbrent: cannot find the real adb on PATH (set ADBRENT_REAL_ADB to its path)");
         exit(127)

@@ -8,18 +8,39 @@ use std::time::{Duration, Instant};
 /// The real adb: `ADBRENT_REAL_ADB`, or the first `adb` on PATH that is not us.
 pub fn real_adb() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("ADBRENT_REAL_ADB").filter(|p| !p.is_empty()) {
-        return Some(p.into());
+        let path = PathBuf::from(p);
+        return (!is_adbrent(&path)).then_some(path);
     }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join("adb"))
+        .find(|candidate| candidate.exists() && !is_adbrent(candidate))
+}
+
+/// Is this `adb` really an adbrent stand-in: ours, or another copy's? Two
+/// copies on one PATH must never take each other for the real adb, or each
+/// hands off to the other without end.
+fn is_adbrent(adb: &Path) -> bool {
+    let Ok(target) = adb.canonicalize() else {
+        return false;
+    };
     let me = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok());
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join("adb"))
-        .find(|candidate| {
-            candidate
-                .canonicalize()
-                .is_ok_and(|real| Some(&real) != me.as_ref())
-        })
+    Some(&target) == me.as_ref()
+        || target
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("adbrent"))
+}
+
+/// Set on every process adbrent starts as the real adb. A stand-in that finds
+/// it set has been handed off to by another adbrent, and stops there.
+pub const HANDOFF: &str = "ADBRENT_HANDOFF";
+
+/// A command that runs the real adb.
+pub fn command(real: &Path) -> Command {
+    let mut command = Command::new(real);
+    command.env(HANDOFF, "1");
+    command
 }
 
 #[derive(Debug, Clone)]
@@ -72,8 +93,8 @@ pub fn parse_devices(output: &str) -> Vec<Device> {
 
 /// Devices the real adb can see. `conn` carries any -H/-P/-L options so we ask
 /// the same adb server the user's command will.
-pub fn devices(real: &PathBuf, conn: &[String]) -> Vec<Device> {
-    Command::new(real)
+pub fn devices(real: &Path, conn: &[String]) -> Vec<Device> {
+    command(real)
         .args(conn)
         .args(["devices", "-l"])
         .output()
@@ -181,7 +202,7 @@ pub fn usage(real: &Path, serial: &str) -> Usage {
     if std::env::var_os("ADBRENT_NO_PROBE").is_some_and(|v| !v.is_empty()) {
         return Usage::default();
     }
-    let spawned = Command::new(real)
+    let spawned = command(real)
         .args(["-s", serial, "shell", PROBE])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
