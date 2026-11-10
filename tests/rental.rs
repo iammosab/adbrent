@@ -351,3 +351,49 @@ fn a_device_in_use_outside_adbrent_is_left_alone() {
         "REAL -s AAA shell id\n"
     );
 }
+
+#[test]
+fn the_plugin_matches_this_version_and_runs_hooks_through_the_binary() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let version = env!("CARGO_PKG_VERSION");
+    let script = std::fs::read_to_string(root.join("plugin/scripts/hook.sh")).unwrap();
+    assert!(
+        script.contains(&format!("\nVERSION={version}\n")),
+        "hook.sh VERSION is out of date"
+    );
+    let manifest = std::fs::read_to_string(root.join("plugin/.claude-plugin/plugin.json")).unwrap();
+    assert!(
+        manifest.contains(&format!("\"version\": \"{version}\"")),
+        "plugin.json version is out of date"
+    );
+
+    // With this version already installed, the script fetches nothing and
+    // passes the hook straight to the binary.
+    let d = Desk::new("plugin");
+    let bin = d.dir.join("home/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_adbrent"), bin.join("adbrent")).unwrap();
+    let mut hook = Command::new(root.join("plugin/scripts/hook.sh"));
+    hook.arg("session-start")
+        .env("ADBRENT_HOME", d.dir.join("home"))
+        .env("ADBRENT_REAL_ADB", d.dir.join("real-adb"))
+        .env("CLAUDE_ENV_FILE", d.dir.join("env"))
+        .env("PATH", "/usr/bin:/bin") // no curl-able network use, no cargo: a fetch would fail
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    let mut child = hook.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"session_id":"p1","cwd":"/w","source":"startup"}"#)
+        .unwrap();
+    let result = out(&child.wait_with_output().unwrap());
+    assert!(
+        result.contains("shared between agents through adbrent"),
+        "{result}"
+    );
+    assert!(std::fs::read_to_string(d.dir.join("env"))
+        .unwrap()
+        .contains("ADBRENT_SESSION='p1'"));
+}

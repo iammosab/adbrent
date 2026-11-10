@@ -28,39 +28,57 @@ adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb` or `adb -
 
 ## Install
 
-You need:
+You need macOS or Linux, and `adb` on your PATH (Android SDK platform-tools).
 
-- macOS or Linux
-- `adb` on your PATH (Android SDK platform-tools)
-- A recent stable [Rust](https://rustup.rs), to build it
-- Claude Code 2.1 or newer, if you want the plugin
+### In Claude Code
 
-Then:
+Inside a Claude Code session, run:
+
+```
+/plugin marketplace add iammosab/adbrent
+/plugin install adbrent@adbrent
+```
+
+Then restart your sessions. The first session to start fetches the adbrent program into
+`~/.adbrent`:
+
+- On a Mac (Apple Silicon or Intel) it downloads the prebuilt binary from this
+  repository's GitHub release and checks it against the SHA-256 recorded in the plugin.
+- Anywhere else it builds it with `cargo`, which takes about half a minute and needs a
+  recent stable [Rust](https://rustup.rs).
+
+If neither works, the session is told that adbrent is not active.
+
+The same two steps from a terminal:
+
+```sh
+claude plugin marketplace add iammosab/adbrent
+claude plugin install adbrent@adbrent
+```
+
+### With cargo
 
 ```sh
 cargo install --git https://github.com/iammosab/adbrent
 adbrent install
 ```
 
-The first command builds the binary into `~/.cargo/bin`. The second one:
-
-1. copies the binary to `~/.adbrent/bin/adbrent`,
-2. creates the `adb` stand-in at `~/.adbrent/shim/adb`,
-3. registers a Claude Code plugin (`adbrent@adbrent`) from `~/.adbrent/plugin`.
-
-Claude Code sessions started after this share devices. Sessions that were already open
-keep using plain adb until they are restarted.
+The first command builds the binary into `~/.cargo/bin`. The second copies it to
+`~/.adbrent`, creates the `adb` stand-in, and installs the same Claude Code plugin for
+you. Use this route for other agents too; `adbrent install --shim-only` skips the plugin.
 
 ### Check that it works
 
+Start a new Claude Code session and ask it to run `adb shell getprop ro.product.model`.
+It should report that a device was rented to the session. In a terminal,
+
 ```sh
-adbrent status
+~/.adbrent/bin/adbrent status
 ```
 
-lists your connected devices with nobody renting them. Then start a new Claude Code
-session and ask it to run `adb shell getprop ro.product.model`. It should report that a
-device was rented to the session, and `adbrent status` in another terminal should show
-that session as the renter. When the session ends, the device is free again.
+should then show that session as the renter, and show the device free again once the
+session ends. Sessions that were open before the install keep using plain adb until they
+are restarted.
 
 ### Other agents and harnesses
 
@@ -71,8 +89,6 @@ shell profile or launch script the agent uses:
 eval "$(~/.adbrent/bin/adbrent env)"
 ```
 
-If you do not use Claude Code, `adbrent install --shim-only` skips the plugin.
-
 The renter is the agent process the command runs under. Codex, opencode, Gemini CLI and
 several others are recognised by name; anything else falls back to the nearest parent
 process that is not a shell. A harness that runs several sessions inside one process can
@@ -80,19 +96,18 @@ name each one by setting `ADBRENT_SESSION=<id>` in that session's environment.
 
 ### Update
 
-```sh
-cargo install --git https://github.com/iammosab/adbrent --force
-adbrent install
-```
+In Claude Code, `/plugin marketplace update adbrent`, then restart your sessions: the
+next one fetches the matching program. With cargo, repeat the two install commands with
+`--force` on the first.
 
 ### Uninstall
 
 ```sh
-adbrent uninstall
-cargo uninstall adbrent
+~/.adbrent/bin/adbrent uninstall
 ```
 
-`adbrent uninstall` removes the Claude Code plugin and `~/.adbrent`, rentals included.
+removes the Claude Code plugin and `~/.adbrent`, rentals included. If you installed with
+cargo, also run `cargo uninstall adbrent`.
 
 ## What agents see
 
@@ -144,7 +159,10 @@ out which device the command targets, checks `~/.adbrent/leases/<serial>.json`, 
 records its owner's process id and start time. When that process is gone the rental is
 ignored and overwritten by the next renter, so nothing has to clean up after a crash.
 
-The Claude Code plugin adds three hooks:
+The Claude Code plugin lives in [`plugin/`](plugin) and adds three hooks. Each goes
+through [`plugin/scripts/hook.sh`](plugin/scripts/hook.sh), which fetches the program when
+a session starts without the right version (`ADBRENT_NO_FETCH=1` turns that off) and
+then hands the hook to it:
 
 - **SessionStart** registers the session, puts the stand-in on the session's PATH, and
   tells the agent in a few sentences how devices are shared.
@@ -194,7 +212,8 @@ with nothing running in between, looks idle between bursts.
 | A Claude Code session still drives any device | The session started before `adbrent install`; restart it. `which adb` inside the session should print `~/.adbrent/shim/adb`. |
 | A device stays rented by a session that is idle | The session is still open. Close it, or run `adbrent release --force <serial>`. |
 | A device is reported in use outside adbrent, and you know it is not | Something left a command running on it (often a forgotten `adb logcat`). Stop that, or run `adbrent rent --force <serial>`. |
-| The plugin did not install | Run the two commands `adbrent install` prints: `claude plugin marketplace add ~/.adbrent/plugin` and `claude plugin install adbrent@adbrent`. |
+| The plugin did not install | Run the two steps yourself: `claude plugin marketplace add iammosab/adbrent` and `claude plugin install adbrent@adbrent`. |
+| A session says adbrent is not active | The program could not be downloaded or built. Check the network, or install it with cargo as above. |
 
 ## Development
 

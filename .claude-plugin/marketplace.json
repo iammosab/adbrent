@@ -1,0 +1,12 @@
+{
+  "name": "adbrent",
+  "description": "adbrent: Android devices shared between AI agents",
+  "owner": { "name": "iammosab" },
+  "plugins": [
+    {
+      "name": "adbrent",
+      "source": "./plugin",
+      "description": "Shares Android devices between agents: each session rents a device on first adb use and others are refused until it is released."
+    }
+  ]
+}

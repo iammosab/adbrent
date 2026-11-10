@@ -1,0 +1,10 @@
+{
+  "name": "adbrent",
+  "version": "0.2.0",
+  "description": "Shares Android devices between agents: each session rents a device on first adb use and others are refused until it is released.",
+  "author": { "name": "iammosab" },
+  "homepage": "https://github.com/iammosab/adbrent",
+  "repository": "https://github.com/iammosab/adbrent",
+  "license": "MIT",
+  "keywords": ["adb", "android", "devices"]
+}
