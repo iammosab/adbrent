@@ -1,19 +1,41 @@
 # adbrent: one Android device per AI agent
 
+**Stop parallel AI coding agents from fighting over the same Android phone or emulator.**
+
 [![Release](https://img.shields.io/github/v/release/iammosab/adbrent)](https://github.com/iammosab/adbrent/releases)
 [![crates.io](https://img.shields.io/crates/v/adbrent)](https://crates.io/crates/adbrent)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms: macOS and Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#in-claude-code)
 
-**[iammosab.github.io/adbrent](https://iammosab.github.io/adbrent/)**: a short tour, with a simulation you can try.
-
-**Stop parallel AI coding agents from fighting over the same Android phone or emulator.**
-adbrent is a device lock for `adb`: each coding-agent session automatically gets its own
-Android device, and keeps it until the session ends. It is built for and tested with
-Claude Code; other agents use it through their PATH.
+[Quick start](#quick-start) · [Install](#install) · [Commands](#commands) · [How it works](#how-it-works) · [FAQ](#faq) · [Website and live demo](https://iammosab.github.io/adbrent/)
 
 ![Agent sessions each rent their own Android device through adbrent; one is refused a held device, and a device is freed when its session ends](assets/how-it-works.gif)
+
+adbrent is a device lock for `adb`. Each coding-agent session automatically gets its own
+Android device, and keeps it until the session ends. It is built for and tested with
+Claude Code. Other agents, such as Codex, opencode and Gemini CLI, use it through their
+PATH and have not been tested end to end.
+
+## Quick start
+
+Inside a Claude Code session:
+
+```
+/plugin marketplace add iammosab/adbrent
+/plugin install adbrent@adbrent
+```
+
+Or with cargo, for any agent:
+
+```sh
+cargo install adbrent && adbrent install
+```
+
+Restart your agent sessions and let them run `adb` as usual. There is nothing to
+configure. [Install](#install) has the details, and how to update or remove it.
+
+## The problem it solves
 
 When several agent sessions run on one machine, they all see the same `adb devices` list
 and end up driving the same phone: one installs an APK while another is halfway through a
@@ -21,6 +43,19 @@ UI test. adbrent gives each session its own device. The first `adb` command a se
 runs rents a free device, later commands go to that same device, and any other session
 that targets it is refused with a message naming the devices that are free. Agents never
 hit `adb: more than one device/emulator`, and never need to be told which serial to use.
+
+- **Nothing for agents to learn.** They keep typing `adb`.
+- **No daemon.** One 0.7 MB binary; a rental is one small file. A command on a device the
+  session already holds takes about 1.5 ms longer.
+- **Costs agents almost nothing to read.** Nothing is added to a session's context when it
+  starts. A session hears from adbrent once, in one line, when it first rents a device,
+  and after that only if it is refused.
+- **Self-healing.** A session that closes or crashes loses its rental immediately.
+- **Sees use it does not manage.** Before handing out a device, adbrent asks the device
+  whether anything is running on it over adb. A phone that Gradle, Android Studio, scrcpy
+  or a plain `adb` elsewhere is using is left alone.
+
+## See it work
 
 ![Two real Claude Code sessions: the first rents a phone, the second is refused when it reaches for it and is given another](assets/demo.gif)
 
@@ -37,17 +72,6 @@ adbrent: R5CT20ABCDE (SM S911B) is already rented by another agent (claude sessi
 adbrent: free now: emulator-5554 (sdk gphone64 arm64). Use plain `adb`, or `adb -s <serial>`.
 adbrent: working for that agent? Get a code from its `adbrent share` and run `adbrent join <code>`.
 ```
-
-- **Nothing for agents to learn.** They keep typing `adb`.
-- **No daemon.** One 0.7 MB binary; a rental is one small file. A command on a device the
-  session already holds takes about 1.5 ms longer.
-- **Costs agents almost nothing to read.** Nothing is added to a session's context when it
-  starts. A session hears from adbrent once, in one line, when it first rents a device,
-  and after that only if it is refused.
-- **Self-healing.** A session that closes or crashes loses its rental immediately.
-- **Sees use it does not manage.** Before handing out a device, adbrent asks the device
-  whether anything is running on it over adb. A phone that Gradle, Android Studio, scrcpy
-  or a plain `adb` elsewhere is using is left alone.
 
 ## Install
 
@@ -394,6 +418,18 @@ emulator on its first `adb` command, with no `-s <serial>` and no per-session se
 there are more sessions than devices, the extra ones are told so, and told to run
 `adbrent rent --wait` in the background: it returns holding a device as soon as one is
 released.
+
+### How do I fix `adb: more than one device/emulator` when agents run in parallel?
+
+That error means adb was not told which device to use. With adbrent installed, a plain
+`adb` command goes to the device its session rented, so agents stop seeing the error and
+stop needing `-s <serial>`.
+
+### Why not set `ANDROID_SERIAL` for each session?
+
+That works if you pick a device for every session yourself, and nothing in a session
+names another serial. adbrent does the picking for you, refuses a session that reaches
+for a device another one holds, and frees the device when the session ends.
 
 ### Does it work with Android emulators?
 
