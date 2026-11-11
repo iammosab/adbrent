@@ -472,4 +472,8 @@ to; the tests use both.
 
 ## License
 
-MIT
+MIT.
+
+adbrent is an independent project, not affiliated with or endorsed by Anthropic or
+Google. Claude and the Claude symbol are trademarks of Anthropic; Android is a trademark
+of Google. The Claude symbol in the illustrations marks a Claude Code session.
