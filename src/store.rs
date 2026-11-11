@@ -149,6 +149,35 @@ pub fn adopt(me: &Me) -> io::Result<()> {
     Ok(())
 }
 
+/// How long a device this session holds is taken to be still connected after
+/// adb last listed it.
+const SEEN_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Note that adb has just listed `serial`, a device this session holds.
+pub fn seen(serial: &str) {
+    if let Ok(f) = fs::OpenOptions::new().write(true).open(lease_path(serial)) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// The one device `me` may use, when its rental was written or adb listed it
+/// in the last half minute: plain `adb` can go straight to it without asking
+/// adb what is connected. Past that, or with several rentals, the caller asks.
+/// (Sharing a device rewrites its rental too, which only delays the next look.)
+pub fn sole_device(me: &Me) -> Option<String> {
+    let mut mine = leases().into_iter().filter(|l| l.allows(me));
+    let lease = mine.next()?;
+    if mine.next().is_some() {
+        return None;
+    }
+    let age = fs::metadata(lease_path(&lease.serial))
+        .and_then(|m| m.modified())
+        .ok()?
+        .elapsed()
+        .ok()?;
+    (age < SEEN_FOR).then_some(lease.serial)
+}
+
 /// The live rental on `serial` held by someone other than `me`, if any.
 pub fn held_by_other(serial: &str, me: &Me) -> Option<Lease> {
     read_lease(serial).filter(|l| !l.allows(me) && l.alive())
@@ -579,8 +608,10 @@ pub fn log_as(kind: &str, who: &str, owner: &str, serial: &str, detail: &str, se
         }
     }
     let _ = fs::create_dir_all(home());
+    // One write for the whole line: written in pieces, the lines of two
+    // commands that finish together end up mixed into each other.
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{line}");
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }
 

@@ -173,6 +173,22 @@ pub fn run(mut args: Vec<OsString>) -> ! {
         exec(&real, args);
     }
 
+    // Nearly as common: no device named, and this session holds exactly one
+    // that adb listed moments ago. Asking adb again costs more than the rest
+    // of adbrent put together.
+    if explicit.is_none()
+        && p.transport.is_none()
+        && p.kind == Kind::Any
+        && p.conn.is_empty()
+        && !adb::server_chosen_by_env()
+    {
+        if let Some(serial) = store::sole_device(&me) {
+            target(&serial);
+            args.splice(0..0, ["-s".into(), serial.into()]);
+            exec(&real, args);
+        }
+    }
+
     let devs = adb::devices(&real, &p.conn);
     let by_transport = || {
         let t = p.transport.as_deref()?;
@@ -205,7 +221,10 @@ pub fn run(mut args: Vec<OsString>) -> ! {
         .copied()
         .collect();
     let chosen = match mine.len() {
-        1 => mine[0].serial.clone(),
+        1 => {
+            store::seen(&mine[0].serial);
+            mine[0].serial.clone()
+        }
         0 => {
             if !pool.iter().any(|d| d.ready()) {
                 exec(&real, args); // nothing usable: let adb report it

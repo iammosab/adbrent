@@ -6,7 +6,7 @@
 #
 # ADBRENT_NO_FETCH=1 turns the fetching off (use whatever binary is installed).
 
-VERSION=0.4.4
+VERSION=0.4.5
 REPO=iammosab/adbrent
 
 event="$1"
@@ -16,8 +16,8 @@ bin="$home/bin/adbrent"
 # SHA-256 of each prebuilt binary of this version.
 checksum() {
   case "$1" in
-    adbrent-darwin-arm64) echo "d6f915e0a0cac28cca9af83c89f157610b44902d7b42c12345ddb886e0ec9d19" ;;
-    adbrent-darwin-x86_64) echo "7a2886b87faee4f166371bd22c6302d615dd387d6caf8928d3ed2c15ada4b4e9" ;;
+    adbrent-darwin-arm64) echo "c337b2d552c3e0895d4470fb0939c0d9a67f52a0e4511434cdf3b692904fa5a6" ;;
+    adbrent-darwin-x86_64) echo "c0ceab0ab7b08b339b224abf4ef32226f420a7ea870c66a82b7439e3616b5e79" ;;
   esac
 }
 

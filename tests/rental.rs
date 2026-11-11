@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 const FAKE_ADB: &str = r#"#!/bin/sh
+# FAKE_CALLS names a file that collects every command line this adb is given.
+[ -n "$FAKE_CALLS" ] && echo "$*" >> "$FAKE_CALLS"
 for a in "$@"; do
   if [ "$a" = devices ]; then
     printf 'List of devices attached\n'
@@ -1075,4 +1077,107 @@ fn the_report_says_so_when_nothing_was_rented_or_refused() {
         report.contains("1 session used adbrent; no rental or refusal was recorded"),
         "{report}"
     );
+}
+
+#[test]
+fn plain_adb_goes_straight_to_the_sessions_device_without_asking_adb_again() {
+    let d = Desk::new("straight");
+    let calls = d.dir.join("calls");
+    let adb = |args: &[&str]| {
+        let mut c = d.command(d.dir.join("shim/adb"), "a", args);
+        c.env("FAKE_CALLS", &calls);
+        c.output().unwrap()
+    };
+    let listings = || {
+        std::fs::read_to_string(&calls)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.split_whitespace().any(|word| word == "devices"))
+            .count()
+    };
+    assert_eq!(out(&adb(&["shell", "id"])), "REAL -s AAA shell id\n");
+    let after_renting = listings();
+    assert_eq!(out(&adb(&["shell", "id"])), "REAL -s AAA shell id\n");
+    assert_eq!(
+        out(&adb(&["install", "app.apk"])),
+        "REAL -s AAA install app.apk\n"
+    );
+    assert_eq!(listings(), after_renting, "adb was asked what is connected");
+
+    // Half a minute on, it asks once more, and then not again for a while.
+    let lease = d.dir.join("home/leases/AAA.json");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lease)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+        .unwrap();
+    assert_eq!(out(&adb(&["shell", "id"])), "REAL -s AAA shell id\n");
+    assert_eq!(listings(), after_renting + 1);
+    assert_eq!(out(&adb(&["shell", "id"])), "REAL -s AAA shell id\n");
+    assert_eq!(listings(), after_renting + 1);
+
+    // A session holding two devices is still asked to name one.
+    d.rent("a", &["rent", "BBB"]);
+    let both = adb(&["shell", "id"]);
+    assert!(err(&both).contains("holds 2 devices"), "{}", err(&both));
+    d.rent("a", &["release", "BBB"]);
+
+    // Whatever picks a device or an adb server some other way still goes
+    // through that adb's own list, even with the rental this fresh.
+    for args in [
+        &["-d", "shell", "id"][..],
+        &["-t", "1", "shell", "id"],
+        &["-P", "5038", "shell", "id"],
+    ] {
+        let before = listings();
+        adb(args);
+        assert_eq!(listings(), before + 1, "{args:?}");
+    }
+    let before = listings();
+    let mut other_server = d.command(d.dir.join("shim/adb"), "a", &["shell", "id"]);
+    other_server
+        .env("FAKE_CALLS", &calls)
+        .env("ANDROID_ADB_SERVER_PORT", "5038");
+    other_server.output().unwrap();
+    assert_eq!(listings(), before + 1);
+    assert_eq!(out(&adb(&["shell", "id"])), "REAL -s AAA shell id\n");
+    assert_eq!(listings(), before + 1);
+}
+
+#[test]
+fn log_lines_written_at_the_same_moment_stay_whole() {
+    let d = Desk::new("whole");
+    d.rent("a", &["debug", "on"]);
+    d.adb("a", &["shell", "id"]);
+    let long = "x".repeat(150);
+    for _ in 0..6 {
+        let running: Vec<_> = (0..24)
+            .map(|_| {
+                d.command(
+                    d.dir.join("shim/adb"),
+                    "a",
+                    &["-s", "AAA", "shell", "echo", &long],
+                )
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap()
+            })
+            .collect();
+        for mut r in running {
+            r.wait().unwrap();
+        }
+    }
+    let log = std::fs::read_to_string(d.dir.join("home/log.jsonl")).unwrap();
+    let broken: Vec<&str> = log
+        .lines()
+        .filter(|l| serde_json::from_str::<serde_json::Value>(l).is_err())
+        .collect();
+    assert!(
+        broken.is_empty(),
+        "{} damaged line(s): {:?}",
+        broken.len(),
+        broken.first()
+    );
+    assert!(log.lines().count() >= 145, "{}", log.lines().count());
 }

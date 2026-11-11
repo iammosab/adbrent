@@ -43,6 +43,18 @@ pub fn command(real: &Path) -> Command {
     command
 }
 
+/// Is the command pointed at an adb server through the environment? Then only
+/// that server can say which devices it has.
+pub fn server_chosen_by_env() -> bool {
+    [
+        "ADB_SERVER_SOCKET",
+        "ANDROID_ADB_SERVER_PORT",
+        "ANDROID_ADB_SERVER_ADDRESS",
+    ]
+    .iter()
+    .any(|v| std::env::var_os(v).is_some_and(|v| !v.is_empty()))
+}
+
 #[derive(Debug, Clone)]
 pub struct Device {
     pub serial: String,
@@ -212,10 +224,14 @@ pub fn usage(real: &Path, serial: &str) -> Usage {
         return Usage::default();
     };
     let deadline = Instant::now() + Duration::from_secs(4);
+    let mut nap = Duration::from_millis(1);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(Duration::from_millis(10));
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();

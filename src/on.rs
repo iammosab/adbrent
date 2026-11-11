@@ -65,12 +65,14 @@ pub fn run(event: &str, serial: &str, renter: &str) {
         return;
     }
     let started = Instant::now();
+    let mut nap = Duration::from_millis(1);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return,
             Ok(Some(status)) => return failed(format!("failed ({status})")),
             Ok(None) if started.elapsed() < LIMIT => {
-                std::thread::sleep(Duration::from_millis(20));
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(Duration::from_millis(20));
             }
             _ => {
                 let _ = child.kill();

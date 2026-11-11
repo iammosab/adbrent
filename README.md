@@ -46,7 +46,7 @@ hit `adb: more than one device/emulator`, and never need to be told which serial
 
 - **Nothing for agents to learn.** They keep typing `adb`.
 - **No daemon.** One 0.7 MB binary; a rental is one small file. A command on a device the
-  session already holds takes about 1.5 ms longer.
+  session already holds takes about 2 ms longer, with or without `-s`.
 - **Costs agents almost nothing to read.** Nothing is added to a session's context when it
   starts. A session hears from adbrent once, in one line, when it first rents a device,
   and after that only if it is refused.
@@ -367,6 +367,10 @@ out which device the command targets, checks `~/.adbrent/leases/<serial>.json`, 
 `exec`s the real adb, so signals, pipes and exit codes behave exactly as before. A rental
 records its owner's process id and start time. When that process is gone the rental is
 ignored and overwritten by the next renter, so nothing has to clean up after a crash.
+
+A session with one device does not ask adb what is connected on every plain `adb`
+command; it checks again every half minute. If the device is unplugged in between, the
+session gets adb's own "device not found" until the next check.
 
 The Claude Code plugin lives in [`plugin/`](plugin) and adds three hooks. Each goes
 through [`plugin/scripts/hook.sh`](plugin/scripts/hook.sh), which fetches the program when
