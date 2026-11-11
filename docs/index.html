@@ -25,6 +25,7 @@
   --tape: #F4C534; --tape-ink: #13202B; --free: #177A50; --stop: #B5371F;
   --focus: #13202B; --shelf: #13202B;
   --term: #13202B; --term-ink: #DCE6EC; --term-dim: #8A9BA8;
+  --term-no: #FF9C86; --term-hint: #8FC7F2; --term-line: #6B7F8E;
   --display: "Bricolage Grotesque", "Arial Narrow", sans-serif;
   --body: "Instrument Sans", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
@@ -38,7 +39,7 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: var(--bench); color: var(--ink); font: 400 17px/1.55 var(--body); -webkit-font-smoothing: antialiased; }
+body { background: var(--bench); color: var(--ink); font: 400 1.0625rem/1.55 var(--body); -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-underline-offset: 3px; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 .wrap { width: min(1120px, 100% - 40px); margin-inline: auto; }
@@ -50,7 +51,7 @@ code, pre { font-family: var(--mono); }
 .brand { font: 800 22px/1 var(--display); letter-spacing: -0.01em; text-decoration: none; }
 .top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
 .top nav a { text-decoration: none; color: var(--muted); }
-.top nav a:hover { color: var(--ink); text-decoration: underline; }
+@media (hover: hover) { .top nav a:hover { color: var(--ink); text-decoration: underline; } }
 
 /* hero */
 .hero { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 56px; align-items: start; padding: 34px 0 72px; }
@@ -61,7 +62,7 @@ h1 { font: 800 clamp(2.7rem, 6.2vw, 4.7rem)/0.96 var(--display); letter-spacing:
 .cmd code { flex: 1; min-width: 0; padding: 14px 16px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cmd code::before { content: "$ "; color: var(--term-dim); }
 .cmd button { font: 600 13px var(--body); color: var(--tape-ink); background: var(--tape); border: 0; border-radius: 0 10px 10px 0; padding: 0 18px; cursor: pointer; }
-.cmd button:hover { filter: brightness(1.06); }
+@media (hover: hover) { .cmd button:hover { filter: brightness(1.06); } }
 .cmd button:focus-visible { outline: 3px solid var(--tape-ink); outline-offset: -6px; }
 .also { margin-top: 14px; font-size: 15px; color: var(--muted); max-width: 36em; }
 
@@ -86,24 +87,26 @@ h1 { font: 800 clamp(2.7rem, 6.2vw, 4.7rem)/0.96 var(--display); letter-spacing:
 .agent .who { font: 600 13px var(--body); color: var(--tape); }
 .agent .lines { grid-column: 1 / -1; min-height: 54px; font: 400 12px/1.5 var(--mono); }
 .agent .lines div { overflow-wrap: anywhere; }
-.agent .no { color: #FF9C86; } .agent .wait { color: #8FC7F2; } .agent .ok { color: var(--tape); }
+.agent .no { color: var(--term-no); } .agent .wait { color: var(--term-hint); } .agent .ok { color: var(--tape); }
 .agent .acts { display: flex; flex-wrap: wrap; gap: 6px; }
-.agent button { font: 500 12px var(--body); color: var(--term-ink); background: transparent; border: 1px solid #6B7F8E; border-radius: 6px; min-height: 32px; padding: 6px 12px; cursor: pointer; }
-.agent button:hover { border-color: var(--tape); color: var(--tape); }
+.agent button { font: 500 12px var(--body); color: var(--term-ink); background: transparent; border: 1px solid var(--term-line); border-radius: 6px; min-height: 32px; padding: 6px 12px; cursor: pointer; }
+@media (hover: hover) { .agent button:hover { border-color: var(--tape); color: var(--tape); } }
 .agent button:focus-visible { outline-color: var(--tape); }
 .start { margin-top: 12px; width: 100%; font: 600 15px var(--body); color: var(--surface); background: var(--ink); border: 0; border-radius: 8px; padding: 13px; cursor: pointer; }
-.start:hover { filter: brightness(1.25); } .start[disabled] { opacity: .45; cursor: default; filter: none; }
+@media (hover: hover) { .start:hover { filter: brightness(1.25); } }
+.start[disabled] { opacity: .45; cursor: default; filter: none; }
+.full { margin-top: 8px; font-size: 14px; color: var(--muted); }
 @media (prefers-color-scheme: dark) { .start:focus-visible { outline-offset: 3px; } }
 
 /* sections */
 section.block { padding: 64px 0; border-top: 1px solid var(--line); }
 section.block.raised { background: var(--surface); }
 section.block > .wrap > h2 { font: 800 clamp(1.8rem, 3.6vw, 2.6rem)/1.05 var(--display); letter-spacing: -0.02em; max-width: 18em; text-wrap: balance; }
-section.block > .wrap > p.intro { color: var(--muted); max-width: 42em; margin-top: 14px; }
+section.block > .wrap > p.intro { color: var(--muted); max-width: 34em; margin-top: 14px; }
 .terms { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 30px; }
 .term { background: var(--term); color: var(--term-ink); border-radius: 12px; padding: 18px 20px; font: 400 13px/1.65 var(--mono); }
 .term h3 { font: 600 14px var(--body); color: var(--term-dim); margin-bottom: 10px; }
-.term .p { color: var(--term-dim); } .term .ok { color: #F4C534; } .term .no { color: #FF9C86; } .term .hint { color: #8FC7F2; }
+.term .p { color: var(--term-dim); } .term .ok { color: var(--tape); } .term .no { color: var(--term-no); } .term .hint { color: var(--term-hint); }
 .term div { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .life { list-style: none; margin-top: 34px; display: grid; grid-template-columns: repeat(4, 1fr); counter-reset: step; }
@@ -117,8 +120,11 @@ section.block > .wrap > p.intro { color: var(--muted); max-width: 42em; margin-t
 .facts dt { font: 700 1.08rem/1.3 var(--display); }
 .facts dd { color: var(--muted); font-size: 15.5px; margin-top: 4px; }
 
-.shot { margin-top: 30px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.shot { margin-top: 30px; border-radius: 12px; overflow: hidden; outline: 1px solid oklch(0 0 0 / 0.1); outline-offset: -1px; }
+@media (prefers-color-scheme: dark) { .shot { outline-color: oklch(1 0 0 / 0.1); } }
 .shot img { display: block; width: 100%; height: auto; }
+.film { margin-top: 30px; border-radius: 12px; overflow: hidden; background: #0E161C; outline: 1px solid oklch(1 0 0 / 0.1); outline-offset: -1px; }
+.film video { display: block; width: 100%; height: auto; }
 
 .install { margin-top: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .way { background: var(--bench); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
@@ -127,13 +133,13 @@ section.block > .wrap > p.intro { color: var(--muted); max-width: 42em; margin-t
 .way p.after { margin: 14px 0 0; }
 .way .cmd { max-width: none; margin-top: 8px; }
 .way .cmd code::before { content: ""; }
-.needs { margin-top: 18px; font-size: 15px; color: var(--muted); max-width: 52em; }
+.needs { margin-top: 18px; font-size: 15px; color: var(--muted); max-width: 34em; }
 
-.limits { margin-top: 24px; display: grid; gap: 10px; max-width: 46em; padding-left: 20px; }
+.limits { margin-top: 24px; display: grid; gap: 10px; max-width: 34em; padding-left: 20px; }
 .limits li { color: var(--muted); } .limits li::marker { color: var(--stop); }
 .limits strong { color: var(--ink); font-weight: 600; }
 
-details { border-bottom: 1px solid var(--line); max-width: 46em; }
+details { border-bottom: 1px solid var(--line); max-width: 34em; }
 details:first-of-type { margin-top: 24px; border-top: 1px solid var(--line); }
 summary { font: 700 1.05rem/1.4 var(--display); padding: 16px 0; cursor: pointer; }
 details p { color: var(--muted); padding-bottom: 18px; }
@@ -148,7 +154,7 @@ footer a { color: var(--ink); }
   .life { grid-template-columns: 1fr 1fr; row-gap: 26px; }
 }
 @media (max-width: 520px) {
-  body { font-size: 16px; }
+  body { font-size: 1rem; }
   .top nav a.opt { display: none; }
   .desk { padding: 14px; }
   .rack { gap: 4px; }
@@ -158,6 +164,9 @@ footer a { color: var(--ink); }
   .agent { grid-template-columns: minmax(0, 1fr); }
   .life { grid-template-columns: 1fr; }
   section.block { padding: 48px 0; }
+}
+@media (max-width: 380px) {
+  .rack { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 22px; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -170,7 +179,7 @@ footer a { color: var(--ink); }
   <a class="brand" href="#">adbrent</a>
   <nav aria-label="Page">
     <a class="opt" href="#how">How it works</a>
-    <a class="opt" href="#limits">What it doesn't do</a>
+    <a class="opt" href="#limits">What it doesn’t do</a>
     <a href="#install">Install</a>
     <a href="https://github.com/iammosab/adbrent">GitHub</a>
   </nav>
@@ -181,16 +190,17 @@ footer a { color: var(--ink); }
   <div>
     <h1>One Android device per AI agent.</h1>
     <p class="lede">Run several coding agents at once and they all reach for the same phone: one installs an APK while another is halfway through a UI test. <strong>adbrent locks each device to one session over adb</strong>, and refuses anyone else who targets it until that session ends. Agents need no instructions; they keep typing <code>adb</code>.</p>
-    <div class="cmd"><code id="quick">claude plugin marketplace add iammosab/adbrent &amp;&amp;<wbr> claude plugin install adbrent@adbrent</code><button type="button" data-copy="quick">Copy</button></div>
+    <div class="cmd"><code id="quick">claude plugin marketplace add iammosab/adbrent &amp;&amp;<wbr> claude plugin install adbrent@adbrent</code><button type="button" data-copy="quick" aria-label="Copy the install command">Copy</button></div>
     <p class="also">Installs the Claude Code plugin from your terminal; no build step on a Mac. Or use <a href="#install">cargo</a>. Free and open source, for macOS and Linux.</p>
   </div>
 
   <section class="desk" aria-labelledby="desk-title">
     <h2 id="desk-title">Try it: four devices, several agents</h2>
-    <p class="how">Start agents, make one try another's phone, end a session. This is a simulation of what adbrent does on your machine.</p>
+    <p class="how">Start agents, make one try another’s device, end a session. This is a simulation of what adbrent does on your machine.</p>
     <ul class="rack" id="rack"></ul>
     <div class="agents" id="agents"></div>
     <button class="start" id="start" type="button">Start another agent</button>
+    <p class="full" id="full" hidden>All six demo agents are running. End a session to start another.</p>
     <p class="sr" id="say" aria-live="polite"></p>
   </section>
 </div>
@@ -198,7 +208,7 @@ footer a { color: var(--ink); }
 <section class="block raised" id="see">
   <div class="wrap">
     <h2>Agents keep typing adb. That is the whole interface.</h2>
-    <p class="intro">adbrent stands in for the <code>adb</code> command on the agent's PATH; your Android SDK is not touched. An agent's first device command locks a free device to its session, and every later command goes to that same device, with no serial to pass around. An agent hears from adbrent in one line when it gets a device, and again only if it is refused.</p>
+    <p class="intro">adbrent stands in for the <code>adb</code> command on the agent’s PATH; your Android SDK is not touched. An agent’s first device command locks a free device to its session (adbrent calls this renting it), and every later command goes to that same device, with no serial to pass around. An agent hears from adbrent in one line when it gets a device, and again only if it is refused.</p>
     <div class="terms">
       <div class="term">
         <h3>The first session</h3>
@@ -220,8 +230,13 @@ footer a { color: var(--ink); }
 <section class="block" id="how">
   <div class="wrap">
     <h2>A lock lasts exactly as long as the session.</h2>
+    <figure class="film">
+      <video id="film" muted loop playsinline controls preload="metadata" poster="how-it-works.png" width="1600" height="900" aria-label="Animation: three agent sessions each rent their own Android device through adbrent. One reaches for a device another holds and is refused. When a session ends its device is free, and the next agent picks it up. The four steps below say the same in text.">
+        <source src="how-it-works.mp4" type="video/mp4">
+      </video>
+    </figure>
     <ol class="life">
-      <li><h3>A session starts</h3><p>Nothing happens yet, and nothing is added to the agent's context. Sessions that never touch Android pay nothing.</p></li>
+      <li><h3>A session starts</h3><p>Nothing happens yet, and nothing is added to the agent’s context. Sessions that never touch Android pay nothing.</p></li>
       <li><h3>It runs adb</h3><p>adbrent picks a free device nobody is using, phones before TVs and watches, and records the rental in one small file.</p></li>
       <li><h3>Others are refused</h3><p>Any session that targets that device is stopped before the command runs, and told which devices are free.</p></li>
       <li><h3>The session ends</h3><p>Closed or crashed, the device is free at once. There is no daemon and nothing to clean up.</p></li>
@@ -233,9 +248,9 @@ footer a { color: var(--ink); }
   <div class="wrap">
     <h2>Built for the ways agents actually reach a phone.</h2>
     <dl class="facts">
-      <div><dt>It notices use it doesn't manage</dt><dd>Before handing out a device, adbrent asks the device what is running on it. A phone that Gradle, Android Studio or scrcpy is using is left alone.</dd></div>
+      <div><dt>It notices use it doesn’t manage</dt><dd>Before handing out a device, adbrent asks the device what is running on it. A phone that Gradle, Android Studio or scrcpy is using is left alone.</dd></div>
       <div><dt>It covers MCP tools too</dt><dd>In Claude Code, a hook checks the device named in each MCP tool call, so a device-control tool cannot use a phone another session holds.</dd></div>
-      <div><dt>Waiting doesn't mean polling</dt><dd>With every device taken, an agent runs <code>adbrent rent --wait</code> in the background and is told the moment it has one.</dd></div>
+      <div><dt>Waiting doesn’t mean polling</dt><dd>With every device taken, an agent runs <code>adbrent rent --wait</code> in the background and is told the moment it has one.</dd></div>
       <div><dt>Helpers can be let in</dt><dd>A session that delegates work shares its device with a code: <code>adbrent share</code>, then <code>adbrent join</code> in the helper.</dd></div>
       <div><dt>It stays out of the way</dt><dd>About 30 tokens once per rental, none at session start, and roughly 1.5&nbsp;ms added to an adb command.</dd></div>
       <div><dt>Agents can tell you what went wrong</dt><dd>Refusals and forced rentals are logged on your machine, and agents can file a note with <code>adbrent feedback</code>. A debug mode, off by default, records everything they do for when you want to study it.</dd></div>
@@ -262,16 +277,16 @@ footer a { color: var(--ink); }
     <div class="install">
       <div class="way">
         <h3>For Claude Code</h3>
-        <p>Pick this if you use Claude Code. On a Mac it downloads a prebuilt program and checks its checksum, so you don't need Rust.</p>
-        <div class="cmd"><code id="cc1">claude plugin marketplace add iammosab/adbrent</code><button type="button" data-copy="cc1">Copy</button></div>
-        <div class="cmd"><code id="cc2">claude plugin install adbrent@adbrent</code><button type="button" data-copy="cc2">Copy</button></div>
+        <p>Pick this if you use Claude Code. On a Mac it downloads a prebuilt program and checks its checksum, so you don’t need Rust.</p>
+        <div class="cmd"><code id="cc1">claude plugin marketplace add iammosab/adbrent</code><button type="button" data-copy="cc1" aria-label="Copy: claude plugin marketplace add">Copy</button></div>
+        <div class="cmd"><code id="cc2">claude plugin install adbrent@adbrent</code><button type="button" data-copy="cc2" aria-label="Copy: claude plugin install">Copy</button></div>
         <p class="after">Inside a session, the same two steps are <code>/plugin marketplace add iammosab/adbrent</code> and <code>/plugin install adbrent@adbrent</code>.</p>
       </div>
       <div class="way">
         <h3>With cargo</h3>
         <p>Pick this on Linux, or for other agents. It builds the program with Rust and sets up the same Claude Code plugin if Claude Code is installed.</p>
-        <div class="cmd"><code id="cg1">cargo install adbrent</code><button type="button" data-copy="cg1">Copy</button></div>
-        <div class="cmd"><code id="cg2">adbrent install</code><button type="button" data-copy="cg2">Copy</button></div>
+        <div class="cmd"><code id="cg1">cargo install adbrent</code><button type="button" data-copy="cg1" aria-label="Copy: cargo install adbrent">Copy</button></div>
+        <div class="cmd"><code id="cg2">adbrent install</code><button type="button" data-copy="cg2" aria-label="Copy: adbrent install">Copy</button></div>
         <p class="after">For another agent, put the stand-in on its PATH: <code>eval "$(~/.adbrent/bin/adbrent env)"</code>. Agents other than Claude Code are untested.</p>
       </div>
     </div>
@@ -281,12 +296,12 @@ footer a { color: var(--ink); }
 
 <section class="block raised" id="limits">
   <div class="wrap">
-    <h2>What it doesn't do.</h2>
+    <h2>What it doesn’t do.</h2>
     <ul class="limits">
       <li><strong>It is a lock, not a device farm.</strong> It shares the devices plugged into one machine between the agents on that machine. There is no server, no remote access and nothing to pay for.</li>
-      <li><strong>It doesn't stop Gradle or Android Studio.</strong> They talk to adb without running the adb command. adbrent notices while they use a device, but cannot refuse them.</li>
+      <li><strong>It doesn’t stop Gradle or Android Studio.</strong> They talk to adb without running the adb command. adbrent notices while they use a device, but cannot refuse them.</li>
       <li><strong>Only Claude Code has been tested.</strong> Other agents work through PATH and are recognised by name, but have not been tested the same way.</li>
-      <li><strong>It doesn't run on Windows.</strong> macOS and Linux only.</li>
+      <li><strong>It doesn’t run on Windows.</strong> macOS and Linux only.</li>
       <li><strong>Waiting agents are not queued in order.</strong> Whichever asks first after a release gets the device.</li>
     </ul>
   </div>
@@ -296,8 +311,8 @@ footer a { color: var(--ink); }
   <div class="wrap">
     <h2>Questions.</h2>
     <details><summary>Does it work with emulators?</summary><p>Yes. Anything <code>adb devices</code> lists can be locked to a session: USB devices, wireless devices, emulators and Android TV.</p></details>
-    <details><summary>Does it fix "adb: more than one device/emulator"?</summary><p>For agents, yes. With several devices attached, plain <code>adb</code> normally fails with that error. Through adbrent, a session's plain <code>adb</code> goes to the device that session holds.</p></details>
-    <details><summary>What happens when an agent crashes while holding a device?</summary><p>The lock is tied to the agent's process. When that process is gone, the device is free the next time anyone asks for it.</p></details>
+    <details><summary>Does it fix "adb: more than one device/emulator"?</summary><p>For agents, yes. With several devices attached, plain <code>adb</code> normally fails with that error. Through adbrent, a session’s plain <code>adb</code> goes to the device that session holds.</p></details>
+    <details><summary>What happens when an agent crashes while holding a device?</summary><p>The lock is tied to the agent’s process. When that process is gone, the device is free the next time anyone asks for it.</p></details>
     <details><summary>Can I keep using a phone myself?</summary><p>Yes. Open scrcpy on it and agents are kept off while it runs, or run <code>adbrent exclude &lt;serial&gt;</code> to put it off limits until you say otherwise.</p></details>
     <details><summary>Does anything leave my machine?</summary><p>No. Rentals, the log and agent feedback are files in <code>~/.adbrent</code>. The only network use is downloading the program itself when you install.</p></details>
   </div>
@@ -394,7 +409,7 @@ footer a { color: var(--ink); }
       const d = deviceOf(a);
       const acts = el("div", "acts");
       const button = (text, key, act) => { const b = el("button", "", text); b.type = "button"; b.dataset.key = `${a.name}:${key}`; b.onclick = () => { quiet = false; act(a); }; acts.append(b); };
-      if (agents.some(o => o !== a && o.serial)) button("Try another agent's phone", "reach", reach);
+      if (agents.some(o => o !== a && o.serial)) button("Try another agent’s device", "reach", reach);
       button("End session", "end", end);
       const lines = el("div", "lines");
       a.lines.forEach(([text, kind]) => lines.append(el("div", kind, text)));
@@ -403,6 +418,7 @@ footer a { color: var(--ink); }
     }));
     const startButton = document.getElementById("start");
     startButton.disabled = agents.length >= names.length;
+    document.getElementById("full").hidden = !startButton.disabled;
     if (focused) {
       // The same button if it still exists and works; otherwise the nearest thing that does.
       const same = document.querySelector(`[data-key="${focused}"]`);
@@ -421,11 +437,20 @@ footer a { color: var(--ink); }
     setTimeout(() => { if (quiet && agents[1]) reach(agents[1]); }, 1600);
   }
 
+  // The explainer plays only while it is on screen, and never for visitors who asked for less motion.
+  const film = document.getElementById("film");
+  if (film && "IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    new IntersectionObserver(entries => entries.forEach(entry => {
+      if (entry.isIntersecting) film.play().catch(() => {}); else film.pause();
+    }), { threshold: 0.4 }).observe(film);
+  }
+
   document.querySelectorAll("[data-copy]").forEach(button => {
     button.onclick = async () => {
-      try { await navigator.clipboard.writeText(document.getElementById(button.dataset.copy).textContent); button.textContent = "Copied"; }
-      catch (error) { button.textContent = "Select and copy"; }
-      setTimeout(() => { button.textContent = "Copy"; }, 1600);
+      const status = document.getElementById("say");
+      try { await navigator.clipboard.writeText(document.getElementById(button.dataset.copy).textContent); button.textContent = "Copied"; status.textContent = "Command copied."; }
+      catch (error) { button.textContent = "Select and copy"; status.textContent = "Could not copy. Select the command and copy it."; }
+      setTimeout(() => { button.textContent = "Copy"; status.textContent = ""; }, 1600);
     };
   });
 })();

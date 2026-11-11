@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>adbrent: how it works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+html, body { margin: 0; background: #0E161C; }
+svg { display: block; width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+// The whole picture is a pure function of time, so a frame can be drawn for any moment:
+// open the file to watch it loop, or add ?t=6.2 to hold one frame (used to export video).
+(() => {
+  const W = 1600, H = 900, LENGTH = 15;
+  const BENCH = "#0E161C", SURF = "#162029", TERM = "#090F13", INK = "#E7EEF2", MUTED = "#96A6B1", LINE = "#2A3843", SHELF = "#3A4B58";
+  const TAPE = "#F4C534", TAPEINK = "#13202B", FREE = "#4CC38A", NO = "#FF9C86", SPARK = "#E08A6D";
+  const DISP = "'Bricolage Grotesque','Arial Narrow',Arial,sans-serif";
+  const BODY = "'Instrument Sans',system-ui,-apple-system,'Segoe UI',Arial,sans-serif";
+  const MONO = "'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace";
+
+  const clamp = x => Math.max(0, Math.min(1, x));
+  const prog = (t, a, b) => clamp((t - a) / (b - a));
+  const ease = p => 1 - Math.pow(1 - p, 3);
+  const pop = p => { const c = 1.70158; const q = p - 1; return 1 + (c + 1) * q * q * q + c * q * q; };
+  const f = n => Number(n).toFixed(1);
+  const text = (x, y, s, size, fill = INK, font = BODY, weight = 400, anchor = "start", extra = "") =>
+    `<text x="${f(x)}" y="${f(y)}" font-family="${font}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}" ${extra}>${s}</text>`;
+
+  const ROWS = [300, 440, 580, 720];
+  const AX = 80, AW = 380, AH = 108, GX = 850, GW = 76, DCX = 1190;
+  const LINE_FROM = AX + AW, LINE_TO = DCX - 50, GATE_MID = GX + GW / 2;
+
+  const devices = [
+    { model: "Pixel 8", serial: "3A021FDJH000XY", kind: "phone" },
+    { model: "Galaxy S23", serial: "R5CT20ABCDE", kind: "phone" },
+    { model: "Emulator", serial: "emulator-5554", kind: "emulator" },
+    { model: "Chromecast", serial: "GTV0001", kind: "tv" },
+  ];
+  // Each agent: when it appears, types, reaches its device, and (for one) ends.
+  const agents = [
+    { name: "shop-app", cmd: "adb install app.apk", row: 0, dev: 0, at: 1.0, end: 10.3 },
+    { name: "chat-app", cmd: "adb shell am instrument", row: 1, dev: 1, at: 3.0 },
+    { name: "maps-app", cmd: "adb logcat", row: 2, dev: 2, at: 8.2 },
+    { name: "notes-app", cmd: "adb install notes.apk", row: 0, dev: 0, at: 11.8 },
+  ];
+  agents.forEach(a => { a.type0 = a.at + 0.3; a.type1 = a.at + 1.0; a.line0 = a.at + 1.0; a.line1 = a.at + 1.7; });
+  const REFUSE = { from: 5.3, hit: 6.0, hold: 7.6, gone: 8.0 };
+  const captions = [
+    [0.3, 3.0, "The first adb command a session runs rents a free device."],
+    [3.0, 5.3, "Each session gets its own. Nobody is told a serial."],
+    [5.3, 8.2, "Reach for a device another session holds, and you are refused."],
+    [8.2, 10.3, "Every later command goes to the same device."],
+    [10.3, 11.8, "When a session ends, its device is free at once."],
+    [11.8, 15, "The next agent picks it up. No daemon, no setup per agent."],
+  ];
+
+  function spark(cx, cy, r = 11) {
+    let d = "";
+    for (let i = 0; i < 8; i++) {
+      const ang = (i * 45 + 12) * Math.PI / 180, k = i % 2 ? 0.72 : 1;
+      d += `M${f(cx + Math.cos(ang) * r * 0.22)} ${f(cy + Math.sin(ang) * r * 0.22)} L${f(cx + Math.cos(ang) * r * k)} ${f(cy + Math.sin(ang) * r * k)} `;
+    }
+    return `<path d="${d}" stroke="${SPARK}" stroke-width="3.4" stroke-linecap="round" fill="none"/>`;
+  }
+
+  // How far along its line an agent has reached, 0 to 1, including the retreat when it ends.
+  function reach(a, t) {
+    let p = ease(prog(t, a.line0, a.line1));
+    if (a.end) p *= 1 - ease(prog(t, a.end + 0.2, a.end + 0.7));
+    return p;
+  }
+
+  function agentCard(a, t) {
+    const y = ROWS[a.row] - AH / 2;
+    const inP = ease(prog(t, a.at, a.at + 0.4));
+    if (inP <= 0) return "";
+    let opacity = inP, ended = false;
+    if (a.end && t >= a.end) { ended = true; opacity = (1 - 0.6 * prog(t, a.end, a.end + 0.5)) * (1 - prog(t, a.end + 0.8, a.end + 1.2)); }
+    if (opacity <= 0) return "";
+    const typed = a.cmd.slice(0, Math.floor(a.cmd.length * prog(t, a.type0, a.type1) + 0.001));
+    const typing = t >= a.type0 && t < a.type1;
+    const cursor = !ended && (typing || Math.floor(t * 2) % 2 === 0);
+    const x = AX - 24 * (1 - inP);
+    return `<g opacity="${f(opacity * 100) / 100}">
+      <rect x="${f(x)}" y="${y}" width="${AW}" height="${AH}" rx="12" fill="${TERM}" stroke="${LINE}" stroke-width="2"/>
+      ${spark(x + 34, y + 30)}
+      ${text(x + 56, y + 38, a.name, 24, TAPE, BODY, 600)}
+      ${text(x + AW - 22, y + 37, ended ? "session ended" : "Claude Code", 15, ended ? NO : MUTED, BODY, ended ? 600 : 400, "end")}
+      ${text(x + 24, y + AH - 26, "$", 18, MUTED, MONO)}${text(x + 46, y + AH - 26, typed, 18, INK, MONO)}
+      ${cursor ? `<rect x="${f(x + 52 + typed.length * 10.8)}" y="${y + AH - 42}" width="9" height="20" fill="${MUTED}" opacity="0.7"/>` : ""}
+    </g>`;
+  }
+
+  function agentLine(a, t) {
+    const p = reach(a, t);
+    if (p <= 0.005) return "";
+    const y = ROWS[a.row], tip = LINE_FROM + (LINE_TO - LINE_FROM) * p;
+    return `<line x1="${LINE_FROM}" y1="${y}" x2="${f(tip - 12)}" y2="${y}" stroke="${TAPE}" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M${f(tip)} ${y} l-16 -9 v18 z" fill="${TAPE}"/>`;
+  }
+
+  function lock(a, t) {
+    const p = reach(a, t), tip = LINE_FROM + (LINE_TO - LINE_FROM) * p;
+    const gate = (GATE_MID - LINE_FROM) / (LINE_TO - LINE_FROM);
+    const k = clamp((p - gate) / 0.12);
+    if (k <= 0 || tip < GATE_MID) return "";
+    const s = pop(k), cx = GATE_MID, cy = ROWS[a.row];
+    return `<g transform="translate(${cx} ${cy}) scale(${f(s * 100) / 100})">
+      <circle r="15" fill="${TAPE}"/>
+      <path d="M-4.5 -2 v-3.5 a4.5 4.5 0 0 1 9 0 v3.5" fill="none" stroke="${TAPEINK}" stroke-width="2.4" stroke-linecap="round"/>
+      <rect x="-7" y="-2.5" width="14" height="10.5" rx="2.5" fill="${TAPEINK}"/></g>`;
+  }
+
+  // Who holds a device at this moment, and how fully (0 to 1) for the colour change.
+  function holder(index, t) {
+    let best = { k: 0, name: "" };
+    agents.filter(a => a.dev === index).forEach(a => {
+      let k = prog(t, a.line1 - 0.05, a.line1 + 0.3);
+      if (a.end) k *= 1 - prog(t, a.end + 0.6, a.end + 0.95);
+      if (k > best.k) best = { k, name: a.name };
+    });
+    return best;
+  }
+
+  function screen(kind, fill, ui, op) {
+    if (kind === "tv") {
+      let s = `<rect x="-46" y="-31" width="92" height="50" rx="2" fill="${fill}"/>`;
+      for (let i = 0; i < 3; i++) s += `<rect x="${-39 + i * 28}" y="-22" width="22" height="14" rx="2" fill="${ui}" opacity="${op}"/>`;
+      return s + `<rect x="-39" y="-1" width="50" height="5" rx="2.5" fill="${ui}" opacity="${op}"/>`;
+    }
+    return `<rect x="-25" y="-51" width="50" height="102" rx="8" fill="${fill}"/>
+      <rect x="-19" y="-33" width="26" height="5" rx="2.5" fill="${ui}" opacity="${op}"/>
+      <rect x="-19" y="-22" width="38" height="22" rx="4" fill="${ui}" opacity="${op}"/>
+      <rect x="-19" y="6" width="38" height="4" rx="2" fill="${ui}" opacity="${op}"/>
+      <rect x="-19" y="15" width="24" height="4" rx="2" fill="${ui}" opacity="${op}"/>
+      <circle cx="13" cy="38" r="6" fill="${ui}" opacity="${op}"/>
+      <rect x="-9" y="46" width="18" height="2.4" rx="1.2" fill="${ui}" opacity="${op}"/>`;
+  }
+
+  function device(d, index, t) {
+    const cy = ROWS[index], { k, name } = holder(index, t);
+    const appear = ease(prog(t, 0.2 + index * 0.12, 0.7 + index * 0.12));
+    // The Pixel 8 is nudged when the refused agent reaches for it.
+    const shake = index === 0 ? Math.sin((t - REFUSE.hit) * 42) * 4 * (t >= REFUSE.hit ? 1 - prog(t, REFUSE.hit, REFUSE.hit + 0.5) : 0) : 0;
+    const body = d.kind === "tv"
+      ? `<rect x="-52" y="-37" width="104" height="62" rx="6" fill="${TERM}" stroke="${INK}" stroke-width="3.5"/>
+         <path d="M-22 37 h44 M0 27 v10" stroke="${INK}" stroke-width="3.5" stroke-linecap="round"/>`
+      : `<rect x="29" y="-24" width="4" height="20" rx="2" fill="${INK}"/>
+         <rect x="-30" y="-56" width="60" height="112" rx="13" fill="${TERM}" stroke="${INK}" stroke-width="3.5"${d.kind === "emulator" ? ' stroke-dasharray="7 5"' : ""}/>`;
+    const camera = d.kind === "tv" ? "" : `<circle cx="0" cy="-43" r="3" fill="${TERM}"/>`;
+    const tx = DCX + 70, ty = cy + 14;
+    const heldW = ("held by " + name).length * 9.7 + 20;
+    const s = 0.7 + 0.3 * pop(k);
+    return `<g opacity="${f(appear * 100) / 100}">
+      <g transform="translate(${f(DCX + shake)} ${cy}) rotate(${f(shake * 0.7)})">${body}${screen(d.kind, SURF, SHELF, 1)}
+        <g opacity="${f(k * 100) / 100}">${screen(d.kind, TAPE, TAPEINK, 0.55)}</g>${camera}</g>
+      ${text(tx, cy - 22, d.model, 25, INK, BODY, 600)}${text(tx, cy + 1, d.serial, 15, MUTED, MONO)}
+      <g opacity="${f((1 - k) * 100) / 100}"><rect x="${tx}" y="${ty}" width="58.8" height="28" rx="3" fill="none" stroke="${FREE}" stroke-width="1.5" stroke-dasharray="5 4"/>${text(tx + 10, ty + 19.5, "free", 16, FREE, MONO, 700)}</g>
+      ${k > 0 ? `<g opacity="${f(k * 100) / 100}" transform="translate(${tx} ${ty + 14}) rotate(-2) scale(${f(s * 100) / 100}) translate(${-tx} ${-(ty + 14)})">
+        <rect x="${tx + 2}" y="${ty + 3}" width="${f(heldW)}" height="28" rx="3" fill="${INK}"/>
+        <rect x="${tx}" y="${ty}" width="${f(heldW)}" height="28" rx="3" fill="${TAPE}" stroke="${TAPEINK}" stroke-width="1.5"/>
+        ${text(tx + 10, ty + 19.5, "held by " + name, 16, TAPEINK, MONO, 700)}</g>` : ""}
+    </g>`;
+  }
+
+  function refusal(t) {
+    if (t < REFUSE.from || t >= REFUSE.gone) return "";
+    const fade = 1 - prog(t, REFUSE.hold, REFUSE.gone);
+    const p = ease(prog(t, REFUSE.from, REFUSE.hit));
+    const P = [[LINE_FROM, ROWS[1] - 26], [LINE_FROM + 130, ROWS[1] - 26], [GX - 140, ROWS[0] + 40], [GX - 16, ROWS[0] + 40]];
+    const mix = (a, b) => [a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p];
+    const q0 = mix(P[0], P[1]), q1 = mix(P[1], P[2]), q2 = mix(P[2], P[3]), r0 = mix(q0, q1), r1 = mix(q1, q2), end = mix(r0, r1);
+    const hit = prog(t, REFUSE.hit, REFUSE.hit + 0.25);
+    const shake = Math.sin((t - REFUSE.hit) * 46) * 6 * (t >= REFUSE.hit ? 1 - prog(t, REFUSE.hit, REFUSE.hit + 0.5) : 0);
+    const cx = GX - 2 + shake, cy = ROWS[0] + 40;
+    return `<g opacity="${f(fade * 100) / 100}">
+      <path d="M${f(P[0][0])} ${f(P[0][1])} C${f(q0[0])} ${f(q0[1])} ${f(r0[0])} ${f(r0[1])} ${f(end[0])} ${f(end[1])}" fill="none" stroke="${NO}" stroke-width="3" stroke-dasharray="9 8" stroke-linecap="round"/>
+      ${hit > 0 ? `<g transform="translate(${f(cx)} ${cy}) scale(${f(pop(hit) * 100) / 100})"><circle r="15" fill="${BENCH}" stroke="${NO}" stroke-width="3"/><path d="M-6 -6 l12 12 M6 -6 l-12 12" stroke="${NO}" stroke-width="3" stroke-linecap="round"/></g>
+        <g opacity="${f(hit * 100) / 100}">${text(GX - 26, cy + 46, "refused", 16, NO, MONO, 700, "end")}${text(GX - 26, cy + 68, "rented by shop-app", 15.5, NO, MONO, 400, "end")}</g>` : ""}
+    </g>`;
+  }
+
+  function frame(t) {
+    const whole = prog(t, 0, 0.4) * (1 - prog(t, LENGTH - 0.4, LENGTH));
+    const top = ROWS[0] - 78, bottom = ROWS[3] + 78;
+    const caption = captions.map(([a, b, s]) => {
+      const o = prog(t, a, a + 0.3) * (1 - prog(t, b - 0.3, b));
+      return o > 0 ? text(80, H - 42, s, 22, INK, BODY, 400, "start", `opacity="${f(o * 100) / 100}"`) : "";
+    }).join("");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Agent sessions each rent their own Android device through adbrent; one is refused a held device; a device is freed when its session ends.">
+      <rect width="${W}" height="${H}" fill="${BENCH}"/>
+      <g opacity="${f(whole * 100) / 100}">
+      ${text(80, 108, "adbrent", 46, TAPE, DISP, 800)}
+      ${text(80, 160, "Each agent session gets its own Android device. Anyone else is refused.", 28, INK, BODY)}
+      ${agents.map(a => agentLine(a, t)).join("")}
+      ${refusal(t)}
+      <rect x="${GX}" y="${top}" width="${GW}" height="${bottom - top}" rx="14" fill="${SURF}" stroke="${SHELF}" stroke-width="2"/>
+      ${text(GATE_MID, top - 14, "adbrent", 18, TAPE, MONO, 700, "middle")}
+      ${text(GATE_MID, bottom + 28, "stands in for adb", 15, MUTED, BODY, 400, "middle")}
+      ${agents.map(a => lock(a, t)).join("")}
+      ${agents.map(a => agentCard(a, t)).join("")}
+      ${devices.map((d, i) => device(d, i, t)).join("")}
+      ${caption}
+      ${text(1520, H - 42, "github.com/iammosab/adbrent", 18, MUTED, MONO, 400, "end")}
+      </g></svg>`;
+  }
+
+  const stage = document.getElementById("stage");
+  window.renderAt = t => { stage.innerHTML = frame(t); };
+  window.animationLength = LENGTH;
+  const fixed = new URLSearchParams(location.search).get("t");
+  if (fixed !== null) { window.renderAt(Number(fixed)); return; }
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { window.renderAt(9.9); return; }
+  const start = performance.now();
+  const tick = now => { window.renderAt(((now - start) / 1000) % LENGTH); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

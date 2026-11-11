@@ -13,6 +13,8 @@ adbrent is a device lock for `adb`: each coding-agent session automatically gets
 Android device, and keeps it until the session ends. It is built for and tested with
 Claude Code; other agents use it through their PATH.
 
+![Agent sessions each rent their own Android device through adbrent; one is refused a held device, and a device is freed when its session ends](assets/how-it-works.gif)
+
 When several agent sessions run on one machine, they all see the same `adb devices` list
 and end up driving the same phone: one installs an APK while another is halfway through a
 UI test. adbrent gives each session its own device. The first `adb` command a session
