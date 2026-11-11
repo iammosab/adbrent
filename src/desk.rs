@@ -2,6 +2,7 @@
 //! outside adbrent is using it.
 
 use crate::adb::{self, Device};
+use crate::on;
 use crate::store::{self, Lease, Me};
 use std::path::Path;
 
@@ -34,6 +35,47 @@ pub fn alternatives(devs: &[Device]) -> String {
             "adbrent: free now: {}. Use plain `adb`, or `adb -s <serial>`.",
             free.join(", ")
         )
+    }
+}
+
+/// Told to an agent that found a free device which belongs to the line first.
+fn queued(what: &str, n: usize) -> String {
+    let agents = if n == 1 {
+        "1 agent waiting for a device comes".to_string()
+    } else {
+        format!("{n} agents waiting for a device come")
+    };
+    format!(
+        "adbrent: {what} free, but {agents} first.\nadbrent: take a place in line: run `adbrent rent --wait` as a background command; it returns holding a device when your turn comes."
+    )
+}
+
+/// How many waiting agents get `serial` before `me` does: those waiting for it
+/// by name, or enough of those waiting for any device to take every free one.
+fn turn_before(serial: &str, me: &Me, devs: &[Device]) -> usize {
+    let ahead = store::ahead(me);
+    if ahead.is_empty() {
+        return 0;
+    }
+    let named = ahead.iter().filter(|w| w.serial == serial).count();
+    if named > 0 {
+        return named;
+    }
+    let any = ahead.iter().filter(|w| w.serial.is_empty()).count();
+    let leases = store::leases();
+    let excluded = store::list("exclude");
+    let free = devs
+        .iter()
+        .filter(|d| {
+            d.ready()
+                && !excluded.contains(&d.serial)
+                && !leases.iter().any(|l| l.serial == d.serial)
+        })
+        .count();
+    if any >= free {
+        any
+    } else {
+        0
     }
 }
 
@@ -86,10 +128,11 @@ pub fn outside(real: &Path, serial: &str) -> Outside {
         .filter(|s| !ignored.iter().any(|text| s.args.contains(text.as_str())))
         .filter(|s| {
             let started = now.saturating_sub(s.age);
-            // A few seconds of slack: a tool may start its helper just before the rental is written.
+            // A few seconds of slack either side: a tool may start its helper just
+            // before the rental is written, and an on-release command runs just after it ends.
             !spans
                 .iter()
-                .any(|&(from, to)| started + 5 >= from && started <= to)
+                .any(|&(from, to)| started + 5 >= from && started <= to + 5)
         })
         .map(adb::Stream::label)
         .collect();
@@ -152,6 +195,11 @@ pub fn claim(real: &Path, serial: &str, me: &Me, devs: &[Device], force: bool) -
             ));
         }
         _ => {
+            let first = turn_before(serial, me, devs);
+            if first > 0 {
+                store::log_event("refused: queued", me, serial, "others were waiting first");
+                return Claim::Refused(queued(&format!("{} is", name(serial, devs)), first));
+            }
             let streams = outside(real, serial).streams;
             if !streams.is_empty() {
                 store::log_event("refused: outside use", me, serial, &streams.join("; "));
@@ -172,6 +220,7 @@ pub fn claim(real: &Path, serial: &str, me: &Me, devs: &[Device], force: bool) -
                         "named by the agent"
                     },
                 );
+                on::run("rent", serial, &me.label);
             }
             Claim::Rented { new }
         }
@@ -188,16 +237,21 @@ pub fn pick<'a>(real: &Path, me: &Me, pool: &[&'a Device]) -> Result<&'a Device,
     let free = pool.iter().copied().filter(|d| {
         d.ready() && !excluded.contains(&d.serial) && !leases.iter().any(|l| l.serial == d.serial)
     });
+    // Agents already waiting in line take theirs first.
+    let ahead = store::ahead(me);
     let mut later = Vec::new(); // (how reluctantly, device)
     let mut busy = Vec::new();
     let take = |d: &'a Device| match store::acquire(&d.serial, me) {
-        Ok(Ok(_)) => {
-            store::log_event(
-                "rented",
-                me,
-                &d.serial,
-                "picked for a command that named no device",
-            );
+        Ok(Ok(new)) => {
+            if new {
+                store::log_event(
+                    "rented",
+                    me,
+                    &d.serial,
+                    "picked for a command that named no device",
+                );
+                on::run("rent", &d.serial, &me.label);
+            }
             Ok(Some(d))
         }
         Ok(Err(_)) => Ok(None), // someone else got there first
@@ -211,15 +265,35 @@ pub fn pick<'a>(real: &Path, me: &Me, pool: &[&'a Device]) -> Result<&'a Device,
             later.push((2, d));
         } else if usage.idle_ms.is_some_and(|ms| ms < RECENT_MS) {
             later.push((1, d));
+        } else if !ahead.is_empty() {
+            later.push((0, d));
         } else if let Some(d) = take(d)? {
             return Ok(d);
         }
     }
     later.sort_by_key(|&(reluctance, _)| reluctance);
-    for (_, d) in later {
+    let mut order: Vec<&'a Device> = later.into_iter().map(|(_, d)| d).collect();
+    // Hand the line its devices in the order it formed; what is left is ours.
+    let offered = order.len();
+    for waiter in &ahead {
+        let at = if waiter.serial.is_empty() {
+            (!order.is_empty()).then_some(0)
+        } else {
+            order.iter().position(|d| d.serial == waiter.serial)
+        };
+        if let Some(at) = at {
+            order.remove(at);
+        }
+    }
+    let kept = offered - order.len();
+    for d in order {
         if let Some(d) = take(d)? {
             return Ok(d);
         }
+    }
+    if kept > 0 {
+        store::log_event("refused: queued", me, "", "others were waiting first");
+        return Err(queued("a device is", ahead.len()));
     }
     store::log_event("refused: none free", me, "", &busy.join(", "));
     if busy.is_empty() {

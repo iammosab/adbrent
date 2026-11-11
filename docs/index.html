@@ -124,7 +124,7 @@ section.block > .wrap > p.intro { color: var(--muted); max-width: 34em; margin-t
 @media (prefers-color-scheme: dark) { .shot { outline-color: oklch(1 0 0 / 0.1); } }
 .shot img { display: block; width: 100%; height: auto; }
 .film { margin-top: 30px; border-radius: 12px; overflow: hidden; background: #0E161C; outline: 1px solid oklch(1 0 0 / 0.1); outline-offset: -1px; }
-.film video { display: block; width: 100%; height: auto; }
+.film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; }
 
 .install { margin-top: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .way { background: var(--bench); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
@@ -164,6 +164,9 @@ footer a { color: var(--ink); }
   .agent { grid-template-columns: minmax(0, 1fr); }
   .life { grid-template-columns: 1fr; }
   section.block { padding: 48px 0; }
+}
+@media (max-width: 520px) {
+  .film video { aspect-ratio: 2 / 3; }
 }
 @media (max-width: 380px) {
   .rack { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 22px; }
@@ -250,8 +253,9 @@ footer a { color: var(--ink); }
     <dl class="facts">
       <div><dt>It notices use it doesn’t manage</dt><dd>Before handing out a device, adbrent asks the device what is running on it. A phone that Gradle, Android Studio or scrcpy is using is left alone.</dd></div>
       <div><dt>It covers MCP tools too</dt><dd>In Claude Code, a hook checks the device named in each MCP tool call, so a device-control tool cannot use a phone another session holds.</dd></div>
-      <div><dt>Waiting doesn’t mean polling</dt><dd>With every device taken, an agent runs <code>adbrent rent --wait</code> in the background and is told the moment it has one.</dd></div>
+      <div><dt>Waiting is a fair line</dt><dd>With every device taken, an agent runs <code>adbrent rent --wait</code> in the background and is told the moment it has one. Whoever has waited longest gets the next free device.</dd></div>
       <div><dt>Helpers can be let in</dt><dd>A session that delegates work shares its device with a code: <code>adbrent share</code>, then <code>adbrent join</code> in the helper.</dd></div>
+      <div><dt>It runs your setup and cleanup</dt><dd><code>adbrent on rent</code> and <code>adbrent on release</code> run a command of yours each time a device changes hands: wake the screen, clear an app, start a recording.</dd></div>
       <div><dt>It stays out of the way</dt><dd>About 30 tokens once per rental, none at session start, and roughly 1.5&nbsp;ms added to an adb command.</dd></div>
       <div><dt>Agents can tell you what went wrong</dt><dd>Refusals and forced rentals are logged on your machine, and agents can file a note with <code>adbrent feedback</code>. A debug mode, off by default, records everything they do for when you want to study it.</dd></div>
     </dl>
@@ -265,7 +269,7 @@ footer a { color: var(--ink); }
     <div class="shot">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="status-page.png">
-        <img src="status-page-light.png" width="2200" height="1520" loading="lazy" alt="The adbrent status page: two of five devices rented by Claude sessions, each with a Take back button, one free, one in use outside adbrent, one off limits, and a feed of what agents ran into.">
+        <img src="status-page-light.png" width="2200" height="2000" loading="lazy" alt="The adbrent status page: three of five devices rented by Claude sessions, each with a Take back button, one in use outside adbrent, one off limits, an agent waiting in line, and the debug panel with a report of the last 24 hours.">
       </picture>
     </div>
   </div>
@@ -302,7 +306,6 @@ footer a { color: var(--ink); }
       <li><strong>It doesn’t stop Gradle or Android Studio.</strong> They talk to adb without running the adb command. adbrent notices while they use a device, but cannot refuse them.</li>
       <li><strong>Only Claude Code has been tested.</strong> Other agents work through PATH and are recognised by name, but have not been tested the same way.</li>
       <li><strong>It doesn’t run on Windows.</strong> macOS and Linux only.</li>
-      <li><strong>Waiting agents are not queued in order.</strong> Whichever asks first after a release gets the device.</li>
     </ul>
   </div>
 </section>
@@ -439,6 +442,13 @@ footer a { color: var(--ink); }
 
   // The explainer plays only while it is on screen, and never for visitors who asked for less motion.
   const film = document.getElementById("film");
+  // Narrow screens get a taller cut with larger parts; the wide one is unreadable at that size.
+  if (film && matchMedia("(max-width: 520px)").matches) {
+    film.poster = "how-it-works-tall.png";
+    film.querySelector("source").src = "how-it-works-tall.mp4";
+    film.width = 1080; film.height = 1620;
+    film.load();
+  }
   if (film && "IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
     new IntersectionObserver(entries => entries.forEach(entry => {
       if (entry.isIntersecting) film.play().catch(() => {}); else film.pause();

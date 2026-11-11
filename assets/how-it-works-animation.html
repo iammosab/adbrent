@@ -17,8 +17,11 @@ svg { display: block; width: 100%; height: auto; }
 <script>
 // The whole picture is a pure function of time, so a frame can be drawn for any moment:
 // open the file to watch it loop, or add ?t=6.2 to hold one frame (used to export video).
+// ?layout=tall draws a 600 by 900 cut with larger parts, for phone screens.
 (() => {
-  const W = 1600, H = 900, LENGTH = 15;
+  const query = new URLSearchParams(location.search);
+  const TALL = query.get("layout") === "tall";
+  const W = TALL ? 600 : 1600, H = 900, LENGTH = 15;
   const BENCH = "#0E161C", SURF = "#162029", TERM = "#090F13", INK = "#E7EEF2", MUTED = "#96A6B1", LINE = "#2A3843", SHELF = "#3A4B58";
   const TAPE = "#F4C534", TAPEINK = "#13202B", FREE = "#4CC38A", NO = "#FF9C86", SPARK = "#E08A6D";
   const DISP = "'Bricolage Grotesque','Arial Narrow',Arial,sans-serif";
@@ -33,9 +36,11 @@ svg { display: block; width: 100%; height: auto; }
   const text = (x, y, s, size, fill = INK, font = BODY, weight = 400, anchor = "start", extra = "") =>
     `<text x="${f(x)}" y="${f(y)}" font-family="${font}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}" ${extra}>${s}</text>`;
 
-  const ROWS = [300, 440, 580, 720];
-  const AX = 80, AW = 380, AH = 108, GX = 850, GW = 76, DCX = 1190;
-  const LINE_FROM = AX + AW, LINE_TO = DCX - 50, GATE_MID = GX + GW / 2;
+  const ROWS = TALL ? [262, 412, 562, 712] : [300, 440, 580, 720];
+  const AX = TALL ? 16 : 80, AW = TALL ? 200 : 380, AH = TALL ? 92 : 108;
+  const GX = TALL ? 262 : 850, GW = TALL ? 36 : 76, DCX = TALL ? 372 : 1190;
+  const LINE_FROM = AX + AW, LINE_TO = DCX - (TALL ? 42 : 50), GATE_MID = GX + GW / 2;
+  const TX = DCX + (TALL ? 50 : 70);
 
   const devices = [
     { model: "Pixel 8", serial: "3A021FDJH000XY", kind: "phone" },
@@ -45,20 +50,22 @@ svg { display: block; width: 100%; height: auto; }
   ];
   // Each agent: when it appears, types, reaches its device, and (for one) ends.
   const agents = [
-    { name: "shop-app", cmd: "adb install app.apk", row: 0, dev: 0, at: 1.0, end: 10.3 },
-    { name: "chat-app", cmd: "adb shell am instrument", row: 1, dev: 1, at: 3.0 },
-    { name: "maps-app", cmd: "adb logcat", row: 2, dev: 2, at: 8.2 },
-    { name: "notes-app", cmd: "adb install notes.apk", row: 0, dev: 0, at: 11.8 },
+    { name: "shop-app", cmd: "adb install app.apk", brief: "adb install", row: 0, dev: 0, at: 1.0, end: 10.3 },
+    { name: "chat-app", cmd: "adb shell am instrument", brief: "adb shell", row: 1, dev: 1, at: 3.0 },
+    { name: "maps-app", cmd: "adb logcat", brief: "adb logcat", row: 2, dev: 2, at: 8.2 },
+    { name: "notes-app", cmd: "adb install notes.apk", brief: "adb install", row: 0, dev: 0, at: 11.8 },
   ];
+  if (TALL) agents.forEach(a => { a.cmd = a.brief; });
   agents.forEach(a => { a.type0 = a.at + 0.3; a.type1 = a.at + 1.0; a.line0 = a.at + 1.0; a.line1 = a.at + 1.7; });
   const REFUSE = { from: 5.3, hit: 6.0, hold: 7.6, gone: 8.0 };
   const captions = [
-    [0.3, 3.0, "The first adb command a session runs rents a free device."],
-    [3.0, 5.3, "Each session gets its own. Nobody is told a serial."],
-    [5.3, 8.2, "Reach for a device another session holds, and you are refused."],
-    [8.2, 10.3, "Every later command goes to the same device."],
-    [10.3, 11.8, "When a session ends, its device is free at once."],
-    [11.8, 15, "The next agent picks it up. No daemon, no setup per agent."],
+    // "|" is where the tall cut breaks the line.
+    [0.3, 3.0, "The first adb command a session runs|rents a free device."],
+    [3.0, 5.3, "Each session gets its own.|Nobody is told a serial."],
+    [5.3, 8.2, "Reach for a device another session holds,|and you are refused."],
+    [8.2, 10.3, "Every later command goes|to the same device."],
+    [10.3, 11.8, "When a session ends,|its device is free at once."],
+    [11.8, 15, "The next agent picks it up.|No daemon, no setup per agent."],
   ];
 
   function spark(cx, cy, r = 11) {
@@ -91,10 +98,12 @@ svg { display: block; width: 100%; height: auto; }
     return `<g opacity="${f(opacity * 100) / 100}">
       <rect x="${f(x)}" y="${y}" width="${AW}" height="${AH}" rx="12" fill="${TERM}" stroke="${LINE}" stroke-width="2"/>
       ${spark(x + 34, y + 30)}
-      ${text(x + 56, y + 38, a.name, 24, TAPE, BODY, 600)}
-      ${text(x + AW - 22, y + 37, ended ? "session ended" : "Claude Code", 15, ended ? NO : MUTED, BODY, ended ? 600 : 400, "end")}
-      ${text(x + 24, y + AH - 26, "$", 18, MUTED, MONO)}${text(x + 46, y + AH - 26, typed, 18, INK, MONO)}
-      ${cursor ? `<rect x="${f(x + 52 + typed.length * 10.8)}" y="${y + AH - 42}" width="9" height="20" fill="${MUTED}" opacity="0.7"/>` : ""}
+      ${text(x + 56, y + 38, a.name, TALL ? 22 : 24, TAPE, BODY, 600)}
+      ${TALL ? ""
+             : text(x + AW - 22, y + 37, ended ? "session ended" : "Claude Code", 15, ended ? NO : MUTED, BODY, ended ? 600 : 400, "end")}
+      ${TALL && ended ? text(x + 24, y + AH - 22, "session ended", 16, NO, BODY, 600)
+        : text(x + 24, y + AH - 22, "$", 17, MUTED, MONO) + text(x + 46, y + AH - 22, typed, 17, INK, MONO)}
+      ${cursor ? `<rect x="${f(x + 52 + typed.length * 10.2)}" y="${y + AH - 37}" width="9" height="19" fill="${MUTED}" opacity="0.7"/>` : ""}
     </g>`;
   }
 
@@ -155,18 +164,19 @@ svg { display: block; width: 100%; height: auto; }
       : `<rect x="29" y="-24" width="4" height="20" rx="2" fill="${INK}"/>
          <rect x="-30" y="-56" width="60" height="112" rx="13" fill="${TERM}" stroke="${INK}" stroke-width="3.5"${d.kind === "emulator" ? ' stroke-dasharray="7 5"' : ""}/>`;
     const camera = d.kind === "tv" ? "" : `<circle cx="0" cy="-43" r="3" fill="${TERM}"/>`;
-    const tx = DCX + 70, ty = cy + 14;
-    const heldW = ("held by " + name).length * 9.7 + 20;
+    const tx = TX, ty = cy + (TALL ? 4 : 14);
+    const heldText = TALL ? name : "held by " + name;
+    const heldW = heldText.length * 9.7 + 20;
     const s = 0.7 + 0.3 * pop(k);
     return `<g opacity="${f(appear * 100) / 100}">
-      <g transform="translate(${f(DCX + shake)} ${cy}) rotate(${f(shake * 0.7)})">${body}${screen(d.kind, SURF, SHELF, 1)}
+      <g transform="translate(${f(DCX + shake)} ${cy}) rotate(${f(shake * 0.7)})${TALL && d.kind === "tv" ? " scale(0.8)" : ""}">${body}${screen(d.kind, SURF, SHELF, 1)}
         <g opacity="${f(k * 100) / 100}">${screen(d.kind, TAPE, TAPEINK, 0.55)}</g>${camera}</g>
-      ${text(tx, cy - 22, d.model, 25, INK, BODY, 600)}${text(tx, cy + 1, d.serial, 15, MUTED, MONO)}
+      ${TALL ? text(tx, cy - 10, d.model, 22, INK, BODY, 600) : text(tx, cy - 22, d.model, 25, INK, BODY, 600) + text(tx, cy + 1, d.serial, 15, MUTED, MONO)}
       <g opacity="${f((1 - k) * 100) / 100}"><rect x="${tx}" y="${ty}" width="58.8" height="28" rx="3" fill="none" stroke="${FREE}" stroke-width="1.5" stroke-dasharray="5 4"/>${text(tx + 10, ty + 19.5, "free", 16, FREE, MONO, 700)}</g>
       ${k > 0 ? `<g opacity="${f(k * 100) / 100}" transform="translate(${tx} ${ty + 14}) rotate(-2) scale(${f(s * 100) / 100}) translate(${-tx} ${-(ty + 14)})">
         <rect x="${tx + 2}" y="${ty + 3}" width="${f(heldW)}" height="28" rx="3" fill="${INK}"/>
         <rect x="${tx}" y="${ty}" width="${f(heldW)}" height="28" rx="3" fill="${TAPE}" stroke="${TAPEINK}" stroke-width="1.5"/>
-        ${text(tx + 10, ty + 19.5, "held by " + name, 16, TAPEINK, MONO, 700)}</g>` : ""}
+        ${text(tx + 10, ty + 19.5, heldText, 16, TAPEINK, MONO, 700)}</g>` : ""}
     </g>`;
   }
 
@@ -174,7 +184,8 @@ svg { display: block; width: 100%; height: auto; }
     if (t < REFUSE.from || t >= REFUSE.gone) return "";
     const fade = 1 - prog(t, REFUSE.hold, REFUSE.gone);
     const p = ease(prog(t, REFUSE.from, REFUSE.hit));
-    const P = [[LINE_FROM, ROWS[1] - 26], [LINE_FROM + 130, ROWS[1] - 26], [GX - 140, ROWS[0] + 40], [GX - 16, ROWS[0] + 40]];
+    const bend = TALL ? 26 : 130, near = TALL ? 28 : 140;
+    const P = [[LINE_FROM, ROWS[1] - 26], [LINE_FROM + bend, ROWS[1] - 26], [GX - near, ROWS[0] + 40], [GX - 16, ROWS[0] + 40]];
     const mix = (a, b) => [a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p];
     const q0 = mix(P[0], P[1]), q1 = mix(P[1], P[2]), q2 = mix(P[2], P[3]), r0 = mix(q0, q1), r1 = mix(q1, q2), end = mix(r0, r1);
     const hit = prog(t, REFUSE.hit, REFUSE.hit + 0.25);
@@ -183,7 +194,8 @@ svg { display: block; width: 100%; height: auto; }
     return `<g opacity="${f(fade * 100) / 100}">
       <path d="M${f(P[0][0])} ${f(P[0][1])} C${f(q0[0])} ${f(q0[1])} ${f(r0[0])} ${f(r0[1])} ${f(end[0])} ${f(end[1])}" fill="none" stroke="${NO}" stroke-width="3" stroke-dasharray="9 8" stroke-linecap="round"/>
       ${hit > 0 ? `<g transform="translate(${f(cx)} ${cy}) scale(${f(pop(hit) * 100) / 100})"><circle r="15" fill="${BENCH}" stroke="${NO}" stroke-width="3"/><path d="M-6 -6 l12 12 M6 -6 l-12 12" stroke="${NO}" stroke-width="3" stroke-linecap="round"/></g>
-        <g opacity="${f(hit * 100) / 100}">${text(GX - 26, cy + 46, "refused", 16, NO, MONO, 700, "end")}${text(GX - 26, cy + 68, "rented by shop-app", 15.5, NO, MONO, 400, "end")}</g>` : ""}
+        <g opacity="${f(hit * 100) / 100}">${TALL ? text(LINE_FROM - 10, cy + 40, "refused", 15, NO, MONO, 700, "end")
+          : text(GX - 26, cy + 46, "refused", 16, NO, MONO, 700, "end") + text(GX - 26, cy + 68, "rented by shop-app", 15.5, NO, MONO, 400, "end")}</g>` : ""}
     </g>`;
   }
 
@@ -192,30 +204,36 @@ svg { display: block; width: 100%; height: auto; }
     const top = ROWS[0] - 78, bottom = ROWS[3] + 78;
     const caption = captions.map(([a, b, s]) => {
       const o = prog(t, a, a + 0.3) * (1 - prog(t, b - 0.3, b));
-      return o > 0 ? text(80, H - 42, s, 22, INK, BODY, 400, "start", `opacity="${f(o * 100) / 100}"`) : "";
+      if (o <= 0) return "";
+      const fade = `opacity="${f(o * 100) / 100}"`;
+      if (!TALL) return text(80, H - 42, s.replace("|", " "), 22, INK, BODY, 400, "start", fade);
+      const [one, two] = s.split("|");
+      return text(16, H - 52, one, 21, INK, BODY, 400, "start", fade) + text(16, H - 24, two, 21, INK, BODY, 400, "start", fade);
     }).join("");
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Agent sessions each rent their own Android device through adbrent; one is refused a held device; a device is freed when its session ends.">
       <rect width="${W}" height="${H}" fill="${BENCH}"/>
       <g opacity="${f(whole * 100) / 100}">
-      ${text(80, 108, "adbrent", 46, TAPE, DISP, 800)}
-      ${text(80, 160, "Each agent session gets its own Android device. Anyone else is refused.", 28, INK, BODY)}
+      ${TALL ? text(16, 66, "adbrent", 40, TAPE, DISP, 800) + text(16, 106, "One Android device per agent session.", 22, INK, BODY)
+             : text(80, 108, "adbrent", 46, TAPE, DISP, 800) + text(80, 160, "Each agent session gets its own Android device. Anyone else is refused.", 28, INK, BODY)}
       ${agents.map(a => agentLine(a, t)).join("")}
       ${refusal(t)}
       <rect x="${GX}" y="${top}" width="${GW}" height="${bottom - top}" rx="14" fill="${SURF}" stroke="${SHELF}" stroke-width="2"/>
-      ${text(GATE_MID, top - 14, "adbrent", 18, TAPE, MONO, 700, "middle")}
-      ${text(GATE_MID, bottom + 28, "stands in for adb", 15, MUTED, BODY, 400, "middle")}
+      ${text(GATE_MID, top - 14, "adbrent", TALL ? 15 : 18, TAPE, MONO, 700, "middle")}
+      ${TALL ? "" : text(GATE_MID, bottom + 28, "stands in for adb", 15, MUTED, BODY, 400, "middle")}
       ${agents.map(a => lock(a, t)).join("")}
       ${agents.map(a => agentCard(a, t)).join("")}
       ${devices.map((d, i) => device(d, i, t)).join("")}
       ${caption}
-      ${text(1520, H - 42, "github.com/iammosab/adbrent", 18, MUTED, MONO, 400, "end")}
+      ${TALL ? "" : text(1520, H - 42, "github.com/iammosab/adbrent", 18, MUTED, MONO, 400, "end")}
       </g></svg>`;
   }
 
   const stage = document.getElementById("stage");
   window.renderAt = t => { stage.innerHTML = frame(t); };
   window.animationLength = LENGTH;
-  const fixed = new URLSearchParams(location.search).get("t");
+  window.stageSize = [W, H];
+  if (TALL) stage.style.maxWidth = "600px";
+  const fixed = query.get("t");
   if (fixed !== null) { window.renderAt(Number(fixed)); return; }
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) { window.renderAt(9.9); return; }
   const start = performance.now();

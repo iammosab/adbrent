@@ -36,6 +36,7 @@ fn state(probes: &Probes) -> String {
         "now": store::now(),
         "devices": cli::rows(&probe),
         "debug": store::debug(),
+        "waiting": store::waiters().into_iter().map(|w| w.label).collect::<Vec<_>>(),
         "report": cli::build_report(24),
         "log": recent,
     })

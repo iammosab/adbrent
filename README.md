@@ -22,7 +22,10 @@ runs rents a free device, later commands go to that same device, and any other s
 that targets it is refused with a message naming the devices that are free. Agents never
 hit `adb: more than one device/emulator`, and never need to be told which serial to use.
 
-![Two agent sessions each get their own Android device; one is refused when it reaches for the other's](assets/demo.gif)
+![Two real Claude Code sessions: the first rents a phone, the second is refused when it reaches for it and is given another](assets/demo.gif)
+
+That is a replay of two real Claude Code sessions on one Mac, each told only to run `adb`.
+The commands and output are theirs; serials are replaced with made-up ones.
 
 ```console
 $ adb shell getprop ro.product.model
@@ -169,6 +172,9 @@ adbrent exclude [SERIAL]           Put a device off limits to agents (no SERIAL:
 adbrent serve [--port N]           Live status page on http://127.0.0.1:7878
 adbrent ignore [TEXT]              Stop counting on-device commands containing TEXT as
                                    outside use (no TEXT: list; --remove TEXT: undo)
+adbrent on [rent|release] [COMMAND]
+                                   Run a command of yours when a device is rented or
+                                   released (no COMMAND: show; --clear: remove)
 adbrent log [-n N] [-f] [--json]   What was logged: refusals, forced rentals, errors,
                                    feedback; -f keeps printing as things happen
 adbrent report [--hours N]         How agents got on with adbrent, and what to look at
@@ -205,8 +211,12 @@ When every device is taken, an agent does not have to keep asking.
   those devices.
 
 Both only read the rental files while they wait, so waiting asks nothing of the devices.
-Waiting agents are not queued in order: whichever asks first after a release gets the
-device.
+
+Waiting agents form a line, first come first served. A device that comes free goes to
+whoever has waited longest; an agent that arrives later, or names that device with
+`adb -s`, is told others are first and to join the line. A place in line lasts as long
+as the `adbrent rent --wait` command that holds it, and `adbrent status` lists who is
+waiting.
 
 ## Live status page
 
@@ -223,7 +233,7 @@ is on, lets you switch it, and carries the same summary as `adbrent report`; wit
 on, a **Commands** view lists every command agents ran. The page keeps itself current, follows your light
 or dark setting, loads nothing from the network, and is served to your own machine only.
 
-![The adbrent status page: two of five devices rented, one free, one in use outside adbrent, one off limits, and a feed of what agents ran into](assets/status-page.png)
+![The adbrent status page: three of five devices rented, one in use outside adbrent, one off limits, an agent waiting in line, and the debug panel with a report of the last 24 hours](assets/status-page.png)
 
 ## Sharing a device with a helper session
 
@@ -252,6 +262,28 @@ puts a device off limits: plain `adb` never picks it, naming it is refused, and 
 not see it in `adb devices`. `adbrent exclude` lists the excluded devices and
 `adbrent exclude --remove <serial>` brings one back. Use it for your personal phone, or
 for a device you want left alone for a while.
+
+## Running your own command on rent and release
+
+```sh
+adbrent on rent    '"$ADB" -s "$ADBRENT_SERIAL" shell input keyevent KEYCODE_WAKEUP'
+adbrent on release '"$ADB" -s "$ADBRENT_SERIAL" shell input keyevent KEYCODE_SLEEP'
+```
+
+runs a shell command of yours each time a device is rented or released: wake the screen
+for an agent and switch it off afterwards, clear an app's data, start a recording. The
+command gets the device as `$ADBRENT_SERIAL`, the real adb as `$ADB`, the renter as
+`$ADBRENT_RENTER` and the event as `$ADBRENT_EVENT`.
+
+- **On rent**, the command finishes before the agent's own command starts, and is stopped
+  after ten seconds.
+- **On release**, it is started and left to run, so nobody waits for it.
+- Use `$ADB`, not plain `adb`: the stand-in refuses to run inside these commands, because
+  it would rent the device for them.
+- A command that fails is recorded in `adbrent log` and does not stop the agent.
+
+`adbrent on` shows both commands, and `adbrent on rent --clear` removes one. They are
+yours to set: an agent has no reason to change them.
 
 ## Seeing how agents get on with it
 
@@ -408,8 +440,6 @@ the next time anyone asks for it.
 - Only Claude Code has been tested end to end. Other agents work through PATH and are
   recognised by name, but have not been tested the same way.
 - macOS and Linux only. Windows is not supported.
-- Waiting agents are not queued in order: whichever asks first after a release gets the
-  device.
 - Inside Claude Code's Bash sandbox, adbrent can read rentals but cannot record new ones
   unless `~/.adbrent` is writable (`sandbox.filesystem.allowWrite`). A command whose
   rental cannot be recorded is stopped, with that fix in the message, because running it

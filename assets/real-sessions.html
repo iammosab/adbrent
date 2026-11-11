@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>adbrent: two real sessions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+html, body { margin: 0; background: #0E161C; }
+#stage { width: 1600px; height: 900px; position: relative; overflow: hidden; background: #0E161C; color: #E7EEF2; font-family: "Instrument Sans", system-ui, sans-serif; }
+.title { position: absolute; left: 60px; top: 38px; font: 800 40px/1 "Bricolage Grotesque", Arial, sans-serif; color: #F4C534; }
+.sub { position: absolute; left: 60px; top: 92px; font-size: 24px; }
+.note { position: absolute; right: 60px; top: 50px; font: 400 15px/1.5 "JetBrains Mono", monospace; color: #96A6B1; text-align: right; }
+.pane { position: absolute; background: #090F13; border: 2px solid #2A3843; border-radius: 12px; box-sizing: border-box; overflow: hidden; }
+.pane .bar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 2px solid #2A3843; font-size: 16px; color: #96A6B1; }
+.pane .bar b { color: #F4C534; font-weight: 600; font-size: 18px; }
+.pane .bar .spark { color: #E08A6D; font-size: 20px; line-height: 1; }
+.pane .body { padding: 14px 18px; font: 400 15.5px/1.55 "JetBrains Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.p { color: #96A6B1; } .ok { color: #F4C534; } .no { color: #FF9C86; } .hint { color: #8FC7F2; } .dim { color: #7D8E9A; }
+.cursor { display: inline-block; width: 9px; height: 18px; background: #96A6B1; vertical-align: -3px; margin-left: 2px; }
+.you { color: #F4C534; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+// What two real Claude Code sessions ran and saw on one Mac, replayed. The commands and
+// output are theirs; device serials (and one model code) are replaced with made-up
+// ones, and the name of an unrelated project is hidden.
+(() => {
+  const DATA = {
+ "a1": {
+  "cmd": "adb shell getprop ro.product.model",
+  "out": [
+   "adbrent: rented 3A021FDJH000XY (Pixel 6a) to this session; plain `adb` now goes to it. `adbrent release` when done, `adbrent help` for more.",
+   "Pixel 6a"
+  ]
+ },
+ "a2": {
+  "cmd": "adb shell sleep 40"
+ },
+ "a3": {
+  "cmd": "adbrent status",
+  "out": [
+   "SERIAL          MODEL                         STATE   RENTED BY",
+   "R5CT20ABCDE     Pixel 4a                      device  claude session ******** in another-project, 1m",
+   "R58N90ABCDE     Chromecast                    device  -",
+   "3A021FDJH000XY  Pixel 6a                      device  you (claude session 45d56056 in shop-app, 43s)",
+   "R9WT40FGHIJ     ZY22ABCDEF                    device  -",
+   "HT7AB1A00001    M2006C3LG                     device  claude session ******** in another-project, 1m",
+   "emulator-5554   sdk google atv64 amati arm64  device  -"
+  ]
+ },
+ "b1": {
+  "cmd": "adb -s 3A021FDJH000XY shell getprop ro.product.model",
+  "out": [
+   "adbrent: 3A021FDJH000XY (Pixel 6a) is already rented by another agent (claude session 45d56056 in shop-app, for 6s). Do not use it.",
+   "adbrent: free now: R58N90ABCDE (Chromecast), R9WT40FGHIJ (ZY22ABCDEF), emulator-5554 (sdk google atv64 amati arm64). Use plain `adb`, or `adb -s <serial>`.",
+   "adbrent: working for that agent? Get a code from its `adbrent share` and run `adbrent join <code>`."
+  ]
+ },
+ "b2": {
+  "cmd": "adb shell getprop ro.product.model",
+  "out": [
+   "adbrent: rented R9WT40FGHIJ (ZY22ABCDEF) to this session; plain `adb` now goes to it. `adbrent release` when done, `adbrent help` for more.",
+   "ZY22ABCDEF"
+  ]
+ }
+};
+  const LENGTH = 21;
+  const clamp = x => Math.max(0, Math.min(1, x));
+  const prog = (t, a, b) => clamp((t - a) / (b - a));
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const kind = line => /^adbrent: rented/.test(line) ? "ok" : /already rented/.test(line) ? "no" : /^adbrent:/.test(line) ? "hint" : "";
+  // One command: typed from `at` for `typing` seconds; its output lines follow, `gap` apart.
+  function step(t, at, typing, s, gap = 0.35, holdNote = "") {
+    if (t < at) return "";
+    const typed = s.cmd.slice(0, Math.floor(s.cmd.length * prog(t, at, at + typing) + 0.001));
+    const done = t >= at + typing;
+    let html = `<div><span class="p">$</span> ${esc(typed)}${done ? "" : '<span class="cursor"></span>'}</div>`;
+    if (done && holdNote) html += `<div class="dim">${holdNote}</div>`;
+    (s.out || []).forEach((line, i) => {
+      if (t >= at + typing + 0.4 + i * gap) {
+        const you = line.includes("you (") ? " you" : "";
+        html += `<div class="${kind(line)}${you}">${esc(line)}</div>`;
+      }
+    });
+    return html;
+  }
+  const pane = (x, y, w, h, name, extra, body) => `<div class="pane" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">
+    <div class="bar"><span class="spark">✳</span><b>${name}</b><span>${extra}</span></div><div class="body">${body}</div></div>`;
+  function frame(t) {
+    const fade = prog(t, 0, 0.4) * (1 - prog(t, LENGTH - 0.4, LENGTH));
+    const holding = t >= 5.2 && t < 14.5 ? "(still running: this session is holding the phone)" : t >= 14.5 ? "(finished after 40 seconds)" : "";
+    const a = step(t, 0.6, 1.2, DATA.a1) + step(t, 4.0, 1.0, DATA.a2, 0.35, holding);
+    const b = step(t, 6.2, 1.8, DATA.b1, 0.6) + step(t, 11.6, 1.2, DATA.b2);
+    const c = step(t, 14.8, 0.7, DATA.a3, 0.12);
+    return `<div style="opacity:${fade.toFixed(2)}">
+      <div class="title">adbrent</div>
+      <div class="sub">Two real Claude Code sessions on one Mac, each told only to run adb.</div>
+      <div class="note">real commands and output<br>serials and other projects hidden</div>
+      ${pane(60, 150, 730, 360, "shop-app", "Claude Code session", a)}
+      ${pane(810, 150, 730, 360, "chat-app", "Claude Code session, started second", b)}
+      ${t >= 14.4 ? pane(60, 530, 1480, 320, "shop-app", "the same session, asking who holds what", c) : ""}
+    </div>`;
+  }
+  const stage = document.getElementById("stage");
+  window.renderAt = t => { stage.innerHTML = frame(t); };
+  window.animationLength = LENGTH;
+  window.stageSize = [1600, 900];
+  const fixed = new URLSearchParams(location.search).get("t");
+  if (fixed !== null) { window.renderAt(Number(fixed)); return; }
+  const start = performance.now();
+  const tick = now => { window.renderAt(((now - start) / 1000) % LENGTH); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

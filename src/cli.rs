@@ -3,7 +3,7 @@
 use crate::adb::{self, Device};
 use crate::desk::{self, Claim};
 use crate::store::{self, Lease};
-use crate::{hook, install, serve};
+use crate::{hook, install, on, serve};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,8 @@ USAGE
   adbrent status [--json]          Devices and who rents each one
   adbrent rent [SERIAL] [--wait[=SECONDS]] [--force]
                                    Rent a device (a free one if none is named)
-                                   and print its serial; --wait queues for one;
+                                   and print its serial; --wait takes a place in
+                                   line for one, first come first served;
                                    --force takes a device that looks in use
                                    outside adbrent
   adbrent watch [SERIAL...] [--once]
@@ -29,6 +30,10 @@ USAGE
                                    --remove SERIAL)
   adbrent ignore [TEXT]            Stop counting on-device commands containing TEXT
                                    as outside use (no TEXT: list; --remove TEXT)
+  adbrent on [rent|release] [COMMAND]
+                                   Run a shell command of yours each time a device is
+                                   rented or released (no COMMAND: show; --clear).
+                                   It gets $ADBRENT_SERIAL and the real adb as $ADB
   adbrent serve [--port N]         Live status page on http://127.0.0.1:7878
   adbrent log [-n N] [-f] [--json] What happened: rentals, refusals, waits, feedback;
                                    -f keeps printing as things happen
@@ -70,6 +75,7 @@ pub fn run(args: Vec<String>) -> i32 {
         Some("join") => join(rest),
         Some("exclude") => edit_list("exclude", rest, "No device is excluded."),
         Some("ignore") => edit_list("ignore", rest, "Nothing is ignored."),
+        Some("on") => on_event(rest),
         Some("serve") => serve::run(rest),
         Some("log") => log(rest),
         Some("report") => report(rest),
@@ -226,7 +232,60 @@ fn status(args: &[String]) -> i32 {
             r.serial, r.model, r.state
         );
     }
+    let line: Vec<String> = store::waiters().into_iter().map(|w| w.label).collect();
+    if !line.is_empty() {
+        println!(
+            "\nWaiting for a device, first in line first: {}",
+            line.join(", ")
+        );
+    }
     0
+}
+
+/// Show, set or clear the command run when a device is rented or released.
+fn on_event(args: &[String]) -> i32 {
+    let show = |event: &str| match on::command(event) {
+        Some(line) => println!("on {event}: {line}"),
+        None => println!("on {event}: nothing"),
+    };
+    let Some(event) = args.first().map(String::as_str) else {
+        show("rent");
+        show("release");
+        return 0;
+    };
+    if !matches!(event, "rent" | "release") {
+        eprintln!("adbrent: `on` takes `rent` or `release`, then a command or --clear");
+        return 2;
+    }
+    let rest = &args[1..];
+    if rest.is_empty() {
+        show(event);
+        return 0;
+    }
+    let result = if rest.len() == 1 && rest[0] == "--clear" {
+        match std::fs::remove_file(on::path(event)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => {
+                println!("Nothing runs on {event} now.");
+                Ok(())
+            }
+        }
+    } else {
+        let line = rest.join(" ");
+        std::fs::create_dir_all(store::home())
+            .and_then(|()| std::fs::write(on::path(event), format!("{line}\n")))
+            .map(|()| {
+                println!("On {event}, adbrent will run: {line}");
+                println!("It gets the device as $ADBRENT_SERIAL and the real adb as $ADB.");
+            })
+    };
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("adbrent: cannot save that: {e}");
+            1
+        }
+    }
 }
 
 fn age(secs: u64) -> String {
@@ -458,22 +517,30 @@ pub fn build_report(hours: u64) -> Report {
         .collect();
     sessions.sort();
     sessions.dedup();
-    report.summary.push(if rented.is_empty() {
-        format!(
-            "The last {}: {} ran into something, {}.",
-            count(hours as usize, "hour"),
-            count(sessions.len(), "session"),
-            count(refused.len(), "refusal")
-        )
-    } else {
-        format!(
-            "The last {}: {}, {}, {}.",
-            count(hours as usize, "hour"),
-            count(sessions.len(), "session"),
-            count(rented.len(), "rental"),
-            count(refused.len(), "refusal")
-        )
-    });
+    report
+        .summary
+        .push(if rented.is_empty() && refused.is_empty() {
+            format!(
+                "The last {}: {} used adbrent; no rental or refusal was recorded.",
+                count(hours as usize, "hour"),
+                count(sessions.len(), "session")
+            )
+        } else if rented.is_empty() {
+            format!(
+                "The last {}: {} ran into something, {}.",
+                count(hours as usize, "hour"),
+                count(sessions.len(), "session"),
+                count(refused.len(), "refusal")
+            )
+        } else {
+            format!(
+                "The last {}: {}, {}, {}.",
+                count(hours as usize, "hour"),
+                count(sessions.len(), "session"),
+                count(rented.len(), "rental"),
+                count(refused.len(), "refusal")
+            )
+        });
     if let Some(held) = middle(
         of("released")
             .iter()
@@ -809,6 +876,7 @@ fn rent(args: &[String]) -> i32 {
                 Claim::Rented { .. } => Ok(s.clone()),
                 Claim::Refused(msg) => Err(msg),
                 Claim::Unrecorded(e) => {
+                    store::dequeue(&me.owner);
                     eprintln!("adbrent: cannot record the rental: {e}");
                     return 1;
                 }
@@ -837,6 +905,7 @@ fn rent(args: &[String]) -> i32 {
                         started.elapsed().as_secs(),
                     );
                 }
+                store::dequeue(&me.owner);
                 println!("{serial}");
                 return 0;
             }
@@ -850,6 +919,7 @@ fn rent(args: &[String]) -> i32 {
             }
         };
         if started.elapsed().as_secs() >= limit {
+            store::dequeue(&me.owner);
             store::log_timed(
                 "wait gave up",
                 &me,
@@ -873,11 +943,17 @@ fn rent(args: &[String]) -> i32 {
             eprintln!("adbrent: waiting for a device to become free...");
             announced = true;
         }
+        // A place in line: first come, first served. It lasts as long as this command.
+        let _ = store::enqueue(&me, serial.as_deref().unwrap_or_default());
         // Reading the rental files costs nothing; a retry asks the devices what
-        // is running on them. So retry when a rental changes, or every 10 seconds.
-        let seen = rentals();
+        // is running on them. So retry when a rental or the line changes, or every 10 seconds.
+        let line = || -> Vec<String> { store::waiters().into_iter().map(|w| w.owner).collect() };
+        let seen = (rentals(), line());
         let retry = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < retry && rentals() == seen && started.elapsed().as_secs() < limit {
+        while Instant::now() < retry
+            && (rentals(), line()) == seen
+            && started.elapsed().as_secs() < limit
+        {
             std::thread::sleep(Duration::from_millis(500));
         }
     }

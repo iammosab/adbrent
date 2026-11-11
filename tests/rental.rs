@@ -936,3 +936,143 @@ fn an_older_plugin_script_never_replaces_a_newer_binary() {
         "the newer binary was replaced"
     );
 }
+
+#[test]
+fn waiting_agents_are_served_in_the_order_they_arrived() {
+    let d = Desk::new("line");
+    let wait = |session: &str, busy: &str| {
+        let mut c = d.command(
+            env!("CARGO_BIN_EXE_adbrent").into(),
+            session,
+            &["rent", "--wait=30"],
+        );
+        c.env("FAKE_BUSY", busy)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        c.spawn().unwrap()
+    };
+    let pause = |ms| std::thread::sleep(std::time::Duration::from_millis(ms));
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+
+    // c cannot take BBB (to c it looks in use), so it waits while BBB sits free.
+    let first = wait("c", "BBB");
+    pause(1200);
+    let late = d.adb("e", &["shell", "id"]);
+    assert_eq!(late.status.code(), Some(1));
+    assert!(out(&late).is_empty(), "the real adb must not run");
+    assert!(
+        err(&late).contains("a device is free, but 1 agent waiting for a device comes first"),
+        "{}",
+        err(&late)
+    );
+    let named = d.adb("e", &["-s", "BBB", "shell", "id"]);
+    assert!(
+        err(&named).contains("BBB (Pixel B) is free, but 1 agent waiting"),
+        "{}",
+        err(&named)
+    );
+    assert!(err(&named).contains("adbrent rent --wait"));
+
+    // A second agent joins the line behind c.
+    let second = wait("f", "BBB");
+    pause(1200);
+    let status = out(&d.rent("a", &["status"]));
+    let line = status
+        .lines()
+        .find(|l| l.starts_with("Waiting for a device"))
+        .unwrap_or_else(|| panic!("no waiting line in: {status}"));
+    let (c_at, f_at) = (
+        line.find("session c").unwrap(),
+        line.find("session f").unwrap(),
+    );
+    assert!(c_at < f_at, "{line}");
+
+    // The device that comes free goes to the one who has waited longest.
+    assert!(out(&d.rent("a", &["release"])).contains("Released AAA"));
+    let got = first.wait_with_output().unwrap();
+    assert_eq!(out(&got), "AAA\n", "{}", err(&got));
+    assert!(out(&d.rent("c", &["release"])).contains("Released AAA"));
+    let got = second.wait_with_output().unwrap();
+    assert_eq!(out(&got), "AAA\n", "{}", err(&got));
+
+    // With nobody left in line, the free device is anyone's again.
+    assert_eq!(out(&d.adb("e", &["shell", "id"])), "REAL -s BBB shell id\n");
+}
+
+#[test]
+fn a_place_in_line_ends_with_the_command_that_held_it() {
+    let d = Desk::new("leave");
+    d.adb("a", &["-s", "AAA", "shell", "id"]);
+    let mut c = d.command(
+        env!("CARGO_BIN_EXE_adbrent").into(),
+        "c",
+        &["rent", "--wait=30"],
+    );
+    let mut waiter = c
+        .env("FAKE_BUSY", "BBB")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    assert_eq!(d.adb("e", &["shell", "id"]).status.code(), Some(1));
+    waiter.kill().unwrap();
+    waiter.wait().unwrap();
+    assert_eq!(out(&d.adb("e", &["shell", "id"])), "REAL -s BBB shell id\n");
+}
+
+#[test]
+fn the_users_commands_run_when_a_device_is_rented_and_released() {
+    let d = Desk::new("on");
+    let record = d.dir.join("ran");
+    let line = format!(
+        "echo \"$ADBRENT_EVENT $ADBRENT_SERIAL $ADB\" >> {}",
+        record.display()
+    );
+    let set = out(&d.rent("u", &["on", "rent", &line]));
+    assert!(set.contains("On rent, adbrent will run"), "{set}");
+    d.rent("u", &["on", "release", &line]);
+    assert!(out(&d.rent("u", &["on"])).contains("on release: echo"));
+
+    assert_eq!(out(&d.adb("a", &["shell", "id"])), "REAL -s AAA shell id\n");
+    d.adb("a", &["shell", "id"]); // a later command on the same rental runs nothing
+    let real = d.dir.join("real-adb");
+    let ran = std::fs::read_to_string(&record).unwrap();
+    assert_eq!(ran, format!("rent AAA {}\n", real.display()));
+
+    d.rent("a", &["release"]);
+    let mut ran = String::new();
+    for _ in 0..40 {
+        ran = std::fs::read_to_string(&record).unwrap();
+        if ran.lines().count() == 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        ran.ends_with(&format!("release AAA {}\n", real.display())),
+        "{ran}"
+    );
+
+    // A command that fails is reported, and does not stop the agent.
+    d.rent("u", &["on", "rent", "exit 3"]);
+    assert_eq!(out(&d.adb("b", &["shell", "id"])), "REAL -s AAA shell id\n");
+    let log = out(&d.rent("u", &["log"]));
+    assert!(log.contains("the on-rent command failed"), "{log}");
+
+    assert!(out(&d.rent("u", &["on", "rent", "--clear"])).contains("Nothing runs on rent now"));
+    assert!(out(&d.rent("u", &["on", "rent"])).contains("on rent: nothing"));
+    assert_eq!(d.rent("u", &["on", "sunrise"]).status.code(), Some(2));
+}
+
+#[test]
+fn the_report_says_so_when_nothing_was_rented_or_refused() {
+    let d = Desk::new("quiet");
+    d.rent("a", &["debug", "on"]);
+    d.rent("a", &["status"]);
+    let report = out(&d.rent("a", &["report"]));
+    assert!(
+        report.contains("1 session used adbrent; no rental or refusal was recorded"),
+        "{report}"
+    );
+}

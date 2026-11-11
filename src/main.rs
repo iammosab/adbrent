@@ -10,6 +10,7 @@ mod cli;
 mod desk;
 mod hook;
 mod install;
+mod on;
 mod proc;
 mod serve;
 mod shim;

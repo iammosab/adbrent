@@ -196,6 +196,7 @@ pub fn acquire(serial: &str, me: &Me) -> io::Result<Result<bool, Lease>> {
                 "its session was gone",
                 Some(now().saturating_sub(l.since)),
             );
+            crate::on::run("release", serial, &l.label);
         }
     }
     write_json(&lease_path(serial), &lease)?;
@@ -279,13 +280,100 @@ pub fn release(pick: impl Fn(&Lease) -> bool, why: Option<&str>) -> io::Result<V
                 Some(why) => ended(&lease, why),
                 None => record_span(&lease),
             }
+            crate::on::run("release", &lease.serial, &lease.label);
             released.push(lease.serial);
         } else if !lease.alive() {
             let _ = fs::remove_file(&path);
             ended(&lease, "its session was gone");
+            crate::on::run("release", &lease.serial, &lease.label);
         }
     }
     Ok(released)
+}
+
+/// An agent waiting its turn for a device (`adbrent rent --wait`).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Waiter {
+    pub owner: String,
+    pub label: String,
+    /// The waiting command's own process: when it is gone, so is its place in line.
+    pub pid: i32,
+    pub start: u64,
+    /// The one device it wants, or empty for any.
+    pub serial: String,
+    /// When it joined, in milliseconds: this is what orders the line.
+    pub since: u64,
+}
+
+fn waiter_path(owner: &str) -> PathBuf {
+    home().join("queue").join(format!("{}.json", safe(owner)))
+}
+
+/// Everyone waiting for a device, longest first. A place whose command is gone
+/// is dropped.
+pub fn waiters() -> Vec<Waiter> {
+    let Ok(dir) = fs::read_dir(home().join("queue")) else {
+        return Vec::new();
+    };
+    let mut line = Vec::new();
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        match read_json::<Waiter>(&path) {
+            Some(w) if proc::alive(w.pid, w.start) => line.push(w),
+            _ => {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    line.sort_by(|a, b| (a.since, &a.owner).cmp(&(b.since, &b.owner)));
+    line
+}
+
+/// Take a place in line for `me`, keeping the place this command already has.
+pub fn enqueue(me: &Me, serial: &str) -> io::Result<()> {
+    let path = waiter_path(&me.owner);
+    let pid = std::process::id() as i32;
+    let start = proc::info(pid).map_or(0, |p| p.start);
+    let since = read_json::<Waiter>(&path)
+        .filter(|w| w.pid == pid && w.start == start)
+        .map_or_else(
+            || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64)
+            },
+            |w| w.since,
+        );
+    write_json(
+        &path,
+        &Waiter {
+            owner: me.owner.clone(),
+            label: me.label.clone(),
+            pid,
+            start,
+            serial: serial.to_string(),
+            since,
+        },
+    )
+}
+
+pub fn dequeue(owner: &str) {
+    let _ = fs::remove_file(waiter_path(owner));
+}
+
+/// The agents whose turn comes before `me`'s: those who joined the line
+/// earlier, or the whole line when `me` is not in it.
+pub fn ahead(me: &Me) -> Vec<Waiter> {
+    let line = waiters();
+    let mine = line.iter().position(|w| w.owner == me.owner);
+    line.into_iter()
+        .enumerate()
+        .filter(|(i, w)| w.owner != me.owner && mine.is_none_or(|m| *i < m))
+        .map(|(_, w)| w)
+        .collect()
 }
 
 fn span_path(serial: &str) -> PathBuf {

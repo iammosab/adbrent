@@ -215,6 +215,7 @@ footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
     $("summary").textContent = here.length ? `${rented} of ${plural(here.length, "device")} rented` : "No devices connected";
     $("sub").textContent = here.length
       ? [`${free} free`, outside ? `${outside} in use outside adbrent` : "", off ? `${off} off limits` : ""].filter(Boolean).join(", ") + "."
+        + ((state.waiting || []).length ? ` Waiting in line: ${state.waiting.join(", ")}.` : "")
       : "Plug in a device or start an emulator. It appears here as soon as adb sees it.";
 
     $("devices").replaceChildren(...(state.devices.length ? state.devices.map(device) : [el("div", "empty", "Nothing to show yet.")]));
